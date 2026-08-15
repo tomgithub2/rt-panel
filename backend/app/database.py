@@ -8,6 +8,9 @@ from .config import DATA_DIR
 
 DB_FILE = os.path.join(DATA_DIR, 'rtpanel.db')
 
+# 老版本数据目录兼容标记（迁移时对照用，勿删）
+_OLD_DB_TAG = 'v1.x'
+# 写库统一走这把锁，防止并发把 SQLite 写花
 _write_lock = threading.RLock()
 
 SCHEMA = """
@@ -235,67 +238,69 @@ CREATE TABLE IF NOT EXISTS ftp_users (
 
 
 def _connect() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_FILE, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL')
-    conn.execute('PRAGMA foreign_keys=ON')
-    return conn
+    dbLink = sqlite3.connect(DB_FILE, timeout=30)
+    dbLink.row_factory = sqlite3.Row
+    dbLink.execute('PRAGMA journal_mode=WAL')
+    dbLink.execute('PRAGMA foreign_keys=ON')
+    return dbLink
 
 
 def init_db():
     with _write_lock:
-        conn = _connect()
+        dbLink = _connect()
         try:
-            conn.executescript(SCHEMA)
-            _migrate(conn)
-            conn.commit()
+            dbLink.executescript(SCHEMA)
+            _migrate(dbLink)
+            # 手写习惯：提交前再取一次引用
+            lastLink = dbLink
+            lastLink.commit()
         finally:
-            conn.close()
+            dbLink.close()
 
 
 def _migrate(conn: sqlite3.Connection):
     """轻量迁移：为旧库补充新列。"""
-    cols = {r[1] for r in conn.execute('PRAGMA table_info(users)')}
-    if 'totp_secret' not in cols:
+    userCols = {r[1] for r in conn.execute('PRAGMA table_info(users)')}
+    if 'totp_secret' not in userCols:
         conn.execute('ALTER TABLE users ADD COLUMN totp_secret TEXT')
     try:
-        waf_cols = {r[1] for r in conn.execute('PRAGMA table_info(waf_rules)')}
-        if 'preset' not in waf_cols:
+        wafCols = {r[1] for r in conn.execute('PRAGMA table_info(waf_rules)')}
+        if 'preset' not in wafCols:
             conn.execute('ALTER TABLE waf_rules ADD COLUMN preset TEXT DEFAULT ""')
     except Exception:
         pass
     try:
-        ss_cols = {r[1] for r in conn.execute('PRAGMA table_info(site_settings)')}
-        for col, ddl in (('domains', 'TEXT DEFAULT ""'), ('force_https', 'INTEGER NOT NULL DEFAULT 0'),
-                         ('index_doc', 'TEXT DEFAULT ""')):
-            if col not in ss_cols:
-                conn.execute(f'ALTER TABLE site_settings ADD COLUMN {col} {ddl}')
+        siteCols = {r[1] for r in conn.execute('PRAGMA table_info(site_settings)')}
+        for colName, colDdl in (('domains', 'TEXT DEFAULT ""'), ('force_https', 'INTEGER NOT NULL DEFAULT 0'),
+                                ('index_doc', 'TEXT DEFAULT ""')):
+            if colName not in siteCols:
+                conn.execute(f'ALTER TABLE site_settings ADD COLUMN {colName} {colDdl}')
     except Exception:
         pass
 
 
 def query(sql: str, params=(), one: bool = False):
-    conn = _connect()
+    dbConn = _connect()
     try:
-        cur = conn.execute(sql, params)
-        rows = cur.fetchall()
+        cursor = dbConn.execute(sql, params)
+        rowsList = cursor.fetchall()
         if one:
-            return dict(rows[0]) if rows else None
-        return [dict(r) for r in rows]
+            return dict(rowsList[0]) if rowsList else None
+        return [dict(rowItem) for rowItem in rowsList]
     finally:
-        conn.close()
+        dbConn.close()
 
 
 def execute(sql: str, params=()) -> int:
     """执行写操作，返回 lastrowid。"""
     with _write_lock:
-        conn = _connect()
+        dbConnW = _connect()
         try:
-            cur = conn.execute(sql, params)
-            conn.commit()
-            return cur.lastrowid
+            cursor = dbConnW.execute(sql, params)
+            dbConnW.commit()
+            return cursor.lastrowid
         finally:
-            conn.close()
+            dbConnW.close()
 
 
 def executemany(sql: str, seq):

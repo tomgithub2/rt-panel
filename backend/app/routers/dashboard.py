@@ -12,6 +12,11 @@ from ..utils import sysinfo
 
 router = APIRouter(prefix='/api/dashboard', tags=['dashboard'])
 
+# 实时推送频率（秒）：太密会刷爆前端，太疏没实时感
+_WS_TICK = 2
+# 今日告警统计窗口（秒）= 24 小时
+_TODAY_WINDOW = 86400
+
 
 @router.get('/overview')
 def overview(user: dict = Depends(get_current_user)):
@@ -29,7 +34,7 @@ def overview(user: dict = Depends(get_current_user)):
         'websites': query('SELECT COUNT(*) c FROM websites', one=True)['c'],
         'backup_tasks': query('SELECT COUNT(*) c FROM backup_tasks', one=True)['c'],
         'alerts_today': query("SELECT COUNT(*) c FROM alert_history WHERE ts > ?",
-                              (now() - 86400,), one=True)['c'],
+                              (now() - _TODAY_WINDOW,), one=True)['c'],
     }
     return data
 
@@ -37,11 +42,11 @@ def overview(user: dict = Depends(get_current_user)):
 @router.get('/sparkline')
 def sparkline(minutes: int = 30, user: dict = Depends(get_current_user)):
     """仪表盘迷你曲线数据（原始采样）。"""
-    since = now() - minutes * 60
-    rows = query(
+    sinceTs = now() - minutes * 60
+    rowsList = query(
         'SELECT ts,cpu,mem,net_rx,net_tx FROM metric_raw WHERE ts>? ORDER BY ts ASC',
-        (since,))
-    return {'list': rows}
+        (sinceTs,))
+    return {'list': rowsList}
 
 
 @router.websocket('/ws/realtime')
@@ -51,20 +56,20 @@ async def ws_realtime(ws: WebSocket):
     try:
         while True:
             try:
-                vm = sysinfo.psutil.virtual_memory()
-                net = sysinfo.psutil.net_io_counters()
-                load = sysinfo.os.getloadavg() if hasattr(sysinfo.os, 'getloadavg') else (0, 0, 0)
-                payload = {
+                memInfo = sysinfo.psutil.virtual_memory()
+                netIo = sysinfo.psutil.net_io_counters()
+                loadAvg = sysinfo.os.getloadavg() if hasattr(sysinfo.os, 'getloadavg') else (0, 0, 0)
+                pushBody = {
                     'ts': time.time(),
                     'cpu': sysinfo.psutil.cpu_percent(interval=None),
-                    'mem': vm.percent,
-                    'net_rx': net.bytes_recv,
-                    'net_tx': net.bytes_sent,
-                    'load1': load[0] if load else 0,
+                    'mem': memInfo.percent,
+                    'net_rx': netIo.bytes_recv,
+                    'net_tx': netIo.bytes_sent,
+                    'load1': loadAvg[0] if loadAvg else 0,
                 }
-                await ws.send_text(json.dumps(payload))
+                await ws.send_text(json.dumps(pushBody))
             except Exception:
                 break
-            await asyncio.sleep(2)
+            await asyncio.sleep(_WS_TICK)
     except WebSocketDisconnect:
         pass

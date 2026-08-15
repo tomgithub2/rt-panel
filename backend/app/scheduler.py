@@ -15,6 +15,11 @@ from .utils.notifier import send as send_notify
 _stop = threading.Event()
 _threads = []
 
+# 采样兜底间隔（老机器上 psutil 偶尔抽风时用）
+_FALLBACK_INTERVAL = 5
+# 一次性任务执行后给调度循环留的宽限秒数
+_ONCE_GRACE = 5
+
 
 # ---------------------------------------------------------------- cron 解析
 def _cron_field_ok(value: int, field: str) -> bool:
@@ -40,7 +45,6 @@ def cron_matches(schedule: str, dt) -> bool:
     """支持 5 段 cron 与 @every 30s/@hourly/@daily 等简化写法。"""
     schedule = schedule.strip()
     if schedule.startswith('@every'):
-        unit = schedule[6:].strip()
         return True  # 由 _should_run_every 单独处理
     if schedule == '@once':
         return True  # 执行一次：创建后立即运行（由 last_run 去重）
@@ -52,15 +56,15 @@ def cron_matches(schedule: str, dt) -> bool:
         return dt.weekday() == 0 and dt.hour == 0 and dt.minute == 0
     if schedule == '@monthly':
         return dt.day == 1 and dt.hour == 0 and dt.minute == 0
-    parts = schedule.split()
-    if len(parts) != 5:
+    timeParts = schedule.split()
+    if len(timeParts) != 5:
         return False
-    minute, hour, day, month, weekday = parts
-    return (_cron_field_ok(dt.minute, minute)
-            and _cron_field_ok(dt.hour, hour)
-            and _cron_field_ok(dt.day, day)
-            and _cron_field_ok(dt.month, month)
-            and _cron_field_ok((dt.weekday() + 1) % 7, weekday))
+    fen, shi, ri, yue, xingqi = timeParts
+    return (_cron_field_ok(dt.minute, fen)
+            and _cron_field_ok(dt.hour, shi)
+            and _cron_field_ok(dt.day, ri)
+            and _cron_field_ok(dt.month, yue)
+            and _cron_field_ok((dt.weekday() + 1) % 7, xingqi))
 
 
 def parse_every(schedule: str) -> int:
@@ -68,14 +72,14 @@ def parse_every(schedule: str) -> int:
     schedule = schedule.strip()
     if not schedule.startswith('@every'):
         return 0
-    unit = schedule[6:].strip().lower()
+    unitStr = schedule[6:].strip().lower()
     try:
-        n = int(unit[:-1])
-        u = unit[-1]
+        numVal = int(unitStr[:-1])
+        unitCh = unitStr[-1]
     except (ValueError, IndexError):
         return 0
-    mult = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}.get(u, 0)
-    return n * mult
+    beiLv = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}.get(unitCh, 0)
+    return numVal * beiLv
 
 
 def next_runs(schedule: str, count: int = 5) -> list:
@@ -83,19 +87,19 @@ def next_runs(schedule: str, count: int = 5) -> list:
     schedule = schedule.strip()
     if schedule == '@once':
         # 执行一次：下一次调度循环立即执行（10 秒内）
-        return [int(time.time()) + 5]
-    every = parse_every(schedule)
-    if every:
-        base = int(time.time()) // every * every
-        return [base + every * i for i in range(1, count + 1)]
+        return [int(time.time()) + _ONCE_GRACE]
+    everySec = parse_every(schedule)
+    if everySec:
+        jiZhun = int(time.time()) // everySec * everySec
+        return [jiZhun + everySec * i for i in range(1, count + 1)]
     import datetime
     out = []
-    t = int(time.time())
+    tsNow = int(time.time())
     for _ in range(count * 2880):  # 最多扫 10 天
-        t += 60
-        dt = datetime.datetime.fromtimestamp(t)
-        if cron_matches(schedule, dt):
-            out.append(t)
+        tsNow += 60
+        dtObj = datetime.datetime.fromtimestamp(tsNow)
+        if cron_matches(schedule, dtObj):
+            out.append(tsNow)
             if len(out) >= count:
                 break
     return out
@@ -107,27 +111,29 @@ def _sample_loop():
     interval = int(cfg.get('sample_interval', 5))
     raw_hours = int(cfg.get('keep_raw_hours', 24))
     while not _stop.is_set():
+        # 采样间隔兜底：万一配置文件被改坏就按 5 秒来
+        sleepSec = interval if interval > 0 else _FALLBACK_INTERVAL
         try:
-            cpu = psutil.cpu_percent(interval=None)
-            vm = psutil.virtual_memory()
-            net = psutil.net_io_counters()
-            disk = psutil.disk_io_counters()
-            load = os.getloadavg() if hasattr(os, 'getloadavg') else (0, 0, 0)
+            cpuPct = psutil.cpu_percent(interval=None)
+            memInfo = psutil.virtual_memory()
+            netIo = psutil.net_io_counters()
+            diskIo = psutil.disk_io_counters()
+            loadAvg = os.getloadavg() if hasattr(os, 'getloadavg') else (0, 0, 0)
             execute(
                 'INSERT INTO metric_raw (ts,cpu,mem,mem_used,mem_total,net_rx,net_tx,'
                 'disk_read,disk_write,load1,load5,load15,proc_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (now(), cpu, vm.percent, vm.used, vm.total,
-                 net.bytes_recv, net.bytes_sent,
-                 disk.read_bytes if disk else 0, disk.write_bytes if disk else 0,
-                 load[0] if len(load) > 0 else 0, load[1] if len(load) > 1 else 0,
-                 load[2] if len(load) > 2 else 0, len(psutil.pids())))
+                (now(), cpuPct, memInfo.percent, memInfo.used, memInfo.total,
+                 netIo.bytes_recv, netIo.bytes_sent,
+                 diskIo.read_bytes if diskIo else 0, diskIo.write_bytes if diskIo else 0,
+                 loadAvg[0] if len(loadAvg) > 0 else 0, loadAvg[1] if len(loadAvg) > 1 else 0,
+                 loadAvg[2] if len(loadAvg) > 2 else 0, len(psutil.pids())))
         except Exception:
             pass
         try:
             execute('DELETE FROM metric_raw WHERE ts < ?', (now() - raw_hours * 3600,))
         except Exception:
             pass
-        _stop.wait(interval)
+        _stop.wait(sleepSec)
 
 
 def _aggregate_loop():

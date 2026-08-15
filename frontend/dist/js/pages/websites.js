@@ -4,6 +4,12 @@ import { fmtTime, hasPerm } from '../util.js'
 
 const { ElMessage } = window.ElementPlus
 
+// 建站表单里自动生成的名字前缀：db_ 给数据库、ftp_ 给 FTP 账号
+const DB_PREFIX = 'db_'
+const FTP_PREFIX = 'ftp_'
+// 数据库名/账号最大长度（MySQL 用户名上限约 32，留点余量）
+const NAME_MAX = 30
+
 export default {
   data() {
     return {
@@ -21,9 +27,9 @@ export default {
   watch: {
     'form.domain'(v) {
       // 输入域名时自动建议数据库名与 FTP 账号（可改）
-      const slug = v.replace(/[^a-z0-9_]/g, '_').slice(0, 30)
-      this.form.db_name = 'db_' + slug
-      this.form.ftp_user = 'ftp_' + slug.slice(0, 20)
+      const slug = v.replace(/[^a-z0-9_]/g, '_').slice(0, NAME_MAX)
+      this.form.db_name = DB_PREFIX + slug
+      this.form.ftp_user = FTP_PREFIX + slug.slice(0, 20)
       if (!this.form.root) this.form.root = ''
     },
   },
@@ -47,9 +53,9 @@ export default {
       if (!this.form.domain) return ElMessage.warning('请输入域名')
       if (this.form.type === 'proxy' && !this.form.target) return ElMessage.warning('反向代理需要填写目标地址')
       try {
-        const r = await api.post('/websites/create', this.form)
+        const createRst = await api.post('/websites/create', this.form)
         this.form.show = false
-        this.result = { show: true, site: this.form.domain, db: r.db, ftp: r.ftp }
+        this.result = { show: true, site: this.form.domain, db: createRst.db, ftp: createRst.ftp }
         this.load()
       } catch (e) {}
     },

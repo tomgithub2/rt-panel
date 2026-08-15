@@ -10,6 +10,13 @@ from ..utils.exec_utils import IS_WIN, run_cmd
 router = APIRouter(prefix='/api/toolbox', tags=['toolbox'],
                    dependencies=[Depends(require_feature('toolbox'))])
 
+# 一键命令默认超时（秒）：个别慢命令可在前端单独传 timeout
+_MR_TIMEOUT = 60
+# 命令输出截断上限（字符），防止大输出把接口响应撑爆
+_OUT_CAP = 8000
+# 交换文件固定位置：与系统级 /swapfile 保持一致，避免和分区型 swap 打架
+_SWAP_PATH = '/swapfile'
+
 PRESETS_WIN = [
     {'name': '内存占用 TOP10 进程', 'cmd': 'powershell -NoProfile -Command "Get-Process | Sort-Object WS -Descending | Select-Object -First 10 Name,@{n=\"内存MB\";e={[math]::Round($_.WS/1MB)}} | Format-Table"', 'safe': True},
     {'name': '网络连接统计', 'cmd': 'netstat -ano | findstr ESTABLISHED', 'safe': True},
@@ -39,14 +46,14 @@ def presets(user: dict = Depends(require_perm('system:view'))):
 
 @router.post('/run')
 def run(body: dict, request: Request, user: dict = Depends(require_perm('system:manage'))):
-    cmd = str(body.get('cmd', '')).strip()
-    if not cmd:
+    cmdStr = str(body.get('cmd', '')).strip()
+    if not cmdStr:
         raise HTTPException(status_code=400, detail='命令不能为空')
-    if len(cmd) > 2000:
+    if len(cmdStr) > 2000:
         raise HTTPException(status_code=400, detail='命令过长')
-    audit(user['username'], get_client_ip(request), 'toolbox_run', cmd[:200])
-    r = run_cmd(cmd, timeout=int(body.get('timeout', 60)), shell=True)
-    return {'code': r['code'], 'output': (r['stdout'] + r['stderr'])[-8000:]}
+    audit(user['username'], get_client_ip(request), 'toolbox_run', cmdStr[:200])
+    runRst = run_cmd(cmdStr, timeout=int(body.get('timeout', _MR_TIMEOUT)), shell=True)
+    return {'code': runRst['code'], 'output': (runRst['stdout'] + runRst['stderr'])[-_OUT_CAP:]}
 
 
 # ---------------------------------------------------------------- Swap 管理（宝塔式）
@@ -82,10 +89,10 @@ def swap_create(body: dict, request: Request, user: dict = Depends(require_perm(
     size_mb = int(body.get('size_mb', 1024))
     if not 128 <= size_mb <= 65536:
         raise HTTPException(status_code=400, detail='Swap 大小需在 128MB-64GB 之间')
-    path = '/swapfile'
-    r = run_cmd(f'fallocate -l {size_mb}M {path} 2>/dev/null || dd if=/dev/zero of={path} '
-                f'bs=1M count={size_mb} && chmod 600 {path} && mkswap {path} && '
-                f'swapon {path}', timeout=600, shell=True)
+    swapPath = _SWAP_PATH
+    r = run_cmd(f'fallocate -l {size_mb}M {swapPath} 2>/dev/null || dd if=/dev/zero of={swapPath} '
+                f'bs=1M count={size_mb} && chmod 600 {swapPath} && mkswap {swapPath} && '
+                f'swapon {swapPath}', timeout=600, shell=True)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '创建失败')[:300])
     swappiness = int(body.get('swappiness', 10))
@@ -100,7 +107,7 @@ def swap_delete(request: Request, user: dict = Depends(require_perm('system:mana
     """关闭并删除 /swapfile。"""
     if IS_WIN:
         raise HTTPException(status_code=400, detail='Windows 无需手动管理 Swap')
-    r = run_cmd('swapoff /swapfile 2>/dev/null; rm -f /swapfile', timeout=120, shell=True)
+    r = run_cmd(f'swapoff {_SWAP_PATH} 2>/dev/null; rm -f {_SWAP_PATH}', timeout=120, shell=True)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '删除失败')[:300])
     audit(user['username'], get_client_ip(request), 'swap_delete', '删除 Swap 文件', 'warning')

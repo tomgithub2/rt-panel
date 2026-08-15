@@ -63,17 +63,18 @@ def _tail_file(path: str, n: int) -> str:
 
 @router.get('/list')
 def site_list(user: dict = Depends(require_perm('websites:view'))):
-    sites = query('SELECT * FROM websites ORDER BY id DESC')
-    for s in sites:
-        s['running'] = _site_running(s)
-    return {'list': sites, 'engine': _find_engine()}
+    wzList = query('SELECT * FROM websites ORDER BY id DESC')
+    for oneSite in wzList:
+        oneSite['running'] = _site_running(oneSite)
+    return {'list': wzList, 'engine': _find_engine()}
 
 
 def _site_running(site: dict) -> bool:
     if site['engine'] == 'nginx' and site['type'] == 'static':
-        r = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {site["domain"]};"',
-                    timeout=20, shell=True)
-        return r['code'] == 0
+        # 用 nginx -T 里能不能 grep 到 server_name 判断站点是否真的在跑
+        checkRst = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {site["domain"]};"',
+                           timeout=20, shell=True)
+        return checkRst['code'] == 0
     return False
 
 
