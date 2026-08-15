@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """网络工具：网卡、路由、ping、traceroute、DNS、端口探测。"""
 import socket
 

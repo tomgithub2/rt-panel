@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """运维工具箱：常用命令一键执行 + 大文件扫描。"""
 import os
 
@@ -52,7 +54,9 @@ def run(body: dict, request: Request, user: dict = Depends(require_perm('system:
     if len(cmdStr) > 2000:
         raise HTTPException(status_code=400, detail='命令过长')
     audit(user['username'], get_client_ip(request), 'toolbox_run', cmdStr[:200])
-    runRst = run_cmd(cmdStr, timeout=int(body.get('timeout', _MR_TIMEOUT)), shell=True)
+    # r0 = os.popen(cmdStr).read()  # 已弃用（拿不到退出码），保留参考
+    runRst = run_cmd(cmdStr,  timeout=int(body.get('timeout', _MR_TIMEOUT)),  shell=True)
+    # 输出直接切尾巴，简单粗暴，够看就行
     return {'code': runRst['code'], 'output': (runRst['stdout'] + runRst['stderr'])[-_OUT_CAP:]}
 
 

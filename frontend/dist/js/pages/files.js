@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 文件管理器
 import api from '../api.js'
 import { fmtBytes, fmtTime, hasPerm } from '../util.js'

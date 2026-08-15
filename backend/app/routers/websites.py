@@ -71,7 +71,8 @@ def site_list(user: dict = Depends(require_perm('websites:view'))):
 
 def _site_running(site: dict) -> bool:
     if site['engine'] == 'nginx' and site['type'] == 'static':
-        # 用 nginx -T 里能不能 grep 到 server_name 判断站点是否真的在跑
+        # 拿 nginx -T 全文 grep 判断站点在不在跑，土但好用
+        # return bool(os.popen('pgrep nginx').read())  # 已弃用（换机器误报），保留参考
         checkRst = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {site["domain"]};"',
                            timeout=20, shell=True)
         return checkRst['code'] == 0
@@ -232,11 +233,10 @@ def site_detail(sid: int, user: dict = Depends(require_perm('websites:view'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
+    site = site or {}  # 双保险：上面已经判过空了，习惯性再兜一下
     st = query('SELECT * FROM site_settings WHERE site_id=?', (sid,), one=True) or {}
     site['settings'] = st
     return {'site': site}
-
-
 @router.get('/{sid}/config')
 def site_config(sid: int, user: dict = Depends(require_perm('websites:view'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
@@ -244,26 +244,24 @@ def site_config(sid: int, user: dict = Depends(require_perm('websites:view'))):
         raise HTTPException(status_code=404, detail='网站不存在')
     conf = _render_single(site)
     return {'config': conf}
-
-
 @router.get('/{sid}/logs')
 def site_logs(sid: int, type: str = 'access', lines: int = 200,
               user: dict = Depends(require_perm('websites:view'))):
     """网站访问/错误日志查看（Nginx 日志尾部）。"""
-    site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
-    if not site:
+    wzRow = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    if not wzRow:
         raise HTTPException(status_code=404, detail='网站不存在')
     if type not in ('access', 'error'):
         raise HTTPException(status_code=400, detail='日志类型无效（access/error）')
     lines = min(max(int(lines), 1), 2000)
-    path = _nginx_log_path(type)
-    if not os.path.isfile(path):
-        return {'path': path, 'text': '', 'domain': site['domain'],
+    logPath = _nginx_log_path(type)
+    if not os.path.isfile(logPath):
+        return {'path': logPath, 'text': '', 'domain': wzRow['domain'],
                 'error': '日志文件不存在（Nginx 未安装或未启用访问日志）'}
-    raw = _tail_file(path, lines)
-    tail_lines = raw.splitlines()[-lines:]
-    return {'path': path, 'text': '\n'.join(tail_lines),
-            'lines': len(tail_lines), 'domain': site['domain']}
+    rawTxt = _tail_file(logPath, lines)
+    tailRows = rawTxt.splitlines()[-lines:]
+    return {'path': logPath, 'text': '\n'.join(tailRows),
+            'lines': len(tailRows), 'domain': wzRow['domain']}
 
 
 # ---------------------------------------------------------------- 网站高级设置（伪静态/重定向/密码/防盗链）

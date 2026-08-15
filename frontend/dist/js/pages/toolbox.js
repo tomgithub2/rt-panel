@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 运维工具箱：常用命令一键执行 + 大文件扫描
 import api from '../api.js'
 import { fmtBytes, hasPerm } from '../util.js'

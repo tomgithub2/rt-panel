@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """发布打包工具：生成 Linux tar.gz 与 Windows installer.exe。
 
 用法:

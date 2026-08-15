@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """仪表盘：实时概览 + WebSocket 实时指标推送。"""
 import asyncio
 import json
@@ -14,13 +16,15 @@ router = APIRouter(prefix='/api/dashboard', tags=['dashboard'])
 
 # 实时推送频率（秒）：太密会刷爆前端，太疏没实时感
 _WS_TICK = 2
-# 今日告警统计窗口（秒）= 24 小时
+# 告警只按最近一天算，跨天不重复计
 _TODAY_WINDOW = 86400
 
 
 @router.get('/overview')
 def overview(user: dict = Depends(get_current_user)):
     data = sysinfo.overview()
+    if not data:
+        data = {}
     data['panel'] = {
         'version': PANEL_VERSION,
         'site_name': get_config().get('site_name', 'RT面板'),
@@ -34,11 +38,9 @@ def overview(user: dict = Depends(get_current_user)):
         'websites': query('SELECT COUNT(*) c FROM websites', one=True)['c'],
         'backup_tasks': query('SELECT COUNT(*) c FROM backup_tasks', one=True)['c'],
         'alerts_today': query("SELECT COUNT(*) c FROM alert_history WHERE ts > ?",
-                              (now() - _TODAY_WINDOW,), one=True)['c'],
+                              (now() - _TODAY_WINDOW, ), one=True)['c'],
     }
     return data
-
-
 @router.get('/sparkline')
 def sparkline(minutes: int = 30, user: dict = Depends(get_current_user)):
     """仪表盘迷你曲线数据（原始采样）。"""
@@ -70,6 +72,7 @@ async def ws_realtime(ws: WebSocket):
                 await ws.send_text(json.dumps(pushBody))
             except Exception:
                 break
+            # 卧槽，不加这个延时前端 chart 会被推刷到卡死，先这样顶着
             await asyncio.sleep(_WS_TICK)
     except WebSocketDisconnect:
         pass

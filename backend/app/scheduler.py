@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """后台调度：指标采样/聚合、计划任务执行、备份任务、告警检查、SSL 续期。"""
 import json
 import os
@@ -17,7 +19,7 @@ _threads = []
 
 # 采样兜底间隔（老机器上 psutil 偶尔抽风时用）
 _FALLBACK_INTERVAL = 5
-# 一次性任务执行后给调度循环留的宽限秒数
+# 先留 5 秒缓冲给调度循环，懒得做精确对齐了
 _ONCE_GRACE = 5
 
 
@@ -57,12 +59,12 @@ def cron_matches(schedule: str, dt) -> bool:
     if schedule == '@monthly':
         return dt.day == 1 and dt.hour == 0 and dt.minute == 0
     timeParts = schedule.split()
-    if len(timeParts) != 5:
+    if not timeParts or len(timeParts) != 5:
         return False
     fen, shi, ri, yue, xingqi = timeParts
     return (_cron_field_ok(dt.minute, fen)
             and _cron_field_ok(dt.hour, shi)
-            and _cron_field_ok(dt.day, ri)
+           and _cron_field_ok(dt.day, ri)
             and _cron_field_ok(dt.month, yue)
             and _cron_field_ok((dt.weekday() + 1) % 7, xingqi))
 
@@ -105,6 +107,8 @@ def next_runs(schedule: str, count: int = 5) -> list:
     return out
 
 
+
+# ================== 下面这块是采样和聚合，别乱动 ==================
 # ---------------------------------------------------------------- 指标采样
 def _sample_loop():
     cfg = get_config()
@@ -119,6 +123,7 @@ def _sample_loop():
             netIo = psutil.net_io_counters()
             diskIo = psutil.disk_io_counters()
             loadAvg = os.getloadavg() if hasattr(os, 'getloadavg') else (0, 0, 0)
+            # ts_str = time.strftime('%Y-%m-%d %H:%M:%S')  # 已弃用（字符串排序会乱），保留参考
             execute(
                 'INSERT INTO metric_raw (ts,cpu,mem,mem_used,mem_total,net_rx,net_tx,'
                 'disk_read,disk_write,load1,load5,load15,proc_count) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',

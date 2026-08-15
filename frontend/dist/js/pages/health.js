@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 体检中心：一键全面健康检查
 import api from '../api.js'
 import { fmtTime } from '../util.js'

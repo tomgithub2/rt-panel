@@ -1,4 +1,6 @@
 #!/bin/bash
+# Created by 小杜 on 2026/08
+
 # ============================================================
 #  RT面板 命令行管理工具（自研 · 类宝塔 bt 命令）
 #  用法: rt [status|start|stop|restart|port|password|entrance|ssl|info|help]

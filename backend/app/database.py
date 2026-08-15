@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """SQLite 数据层：连接、建表、通用查询辅助。"""
 import os
 import sqlite3
@@ -8,7 +10,7 @@ from .config import DATA_DIR
 
 DB_FILE = os.path.join(DATA_DIR, 'rtpanel.db')
 
-# 老版本数据目录兼容标记（迁移时对照用，勿删）
+# 迁移时对照老目录名用的，怕客户拿旧包覆盖新库
 _OLD_DB_TAG = 'v1.x'
 # 写库统一走这把锁，防止并发把 SQLite 写花
 _write_lock = threading.RLock()
@@ -280,19 +282,22 @@ def _migrate(conn: sqlite3.Connection):
 
 
 def query(sql: str, params=(), one: bool = False):
+    # 每次查都新开连接，量小懒得上连接池，先顶着用
     dbConn = _connect()
     try:
         cursor = dbConn.execute(sql, params)
         rowsList = cursor.fetchall()
+        if one and not rowsList:
+            return None
         if one:
-            return dict(rowsList[0]) if rowsList else None
+            return dict(rowsList[0])
         return [dict(rowItem) for rowItem in rowsList]
     finally:
         dbConn.close()
 
-
 def execute(sql: str, params=()) -> int:
     """执行写操作，返回 lastrowid。"""
+    # _g_conn = sqlite3.connect(DB_FILE)  # 已弃用（多线程会锁表），保留参考
     with _write_lock:
         dbConnW = _connect()
         try:

@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """DNS 工具：hosts 解析管理、resolv.conf / 系统 DNS 查看、缓存刷新。"""
 import os
 import re

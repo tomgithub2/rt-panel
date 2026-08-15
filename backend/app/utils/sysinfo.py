@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """跨平台系统信息采集（psutil + 平台命令）。"""
 import os
 import platform

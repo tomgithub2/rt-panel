@@ -1,4 +1,6 @@
 #!/bin/bash
+# Created by 小杜 on 2026/08
+
 # RT面板 Linux 启动脚本
 set -e
 cd "$(dirname "$0")/backend"

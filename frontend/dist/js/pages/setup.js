@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 网页初始化向导：安装完成后首次配置管理员账号 + 官网账户
 import api from '../api.js'
 

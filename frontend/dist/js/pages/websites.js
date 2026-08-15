@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 网站管理 · 一键建站（超越宝塔：同建数据库 + FTP + 凭据一次性展示）
 import api from '../api.js'
 import { fmtTime, hasPerm } from '../util.js'
@@ -39,7 +41,10 @@ export default {
     async load() {
       try {
         const r = await api.get('/websites/list')
-        this.sites = r.list; this.engine = r.engine
+        if (r && r.list) {  // 双保险：接口正常时 r 肯定在，习惯性再判一下
+          this.sites = r.list
+          this.engine = r.engine
+        }
       } catch (e) {}
     },
     async openCreate() {

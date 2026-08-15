@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """通知渠道：邮件 / Webhook / 钉钉 / 企业微信 / 飞书。"""
 import json
 import smtplib

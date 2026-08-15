@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """日志管理：系统日志、面板审计日志、文件 tail。"""
 import os
 

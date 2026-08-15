@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // AI 助手（面板内置 Agent，自研界面；接入任意 OpenAI 兼容大模型）
 import api from '../api.js'
 import { hasPerm } from '../util.js'

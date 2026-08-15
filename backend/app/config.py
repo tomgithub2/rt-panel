@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """RT面板 全局配置（JSON 持久化）。"""
 import json
 import os

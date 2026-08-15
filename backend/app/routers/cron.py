@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """计划任务管理（面板内置调度，跨平台一致）。"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 

@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """软件商店：常用软件检测 / 安装 / 卸载（跨平台命令映射）。"""
 import os
 import re

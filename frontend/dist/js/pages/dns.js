@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // DNS 工具
 import api from '../api.js'
 import { hasPerm } from '../util.js'

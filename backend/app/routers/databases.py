@@ -1,3 +1,5 @@
+# Created by 小杜 on 2026/08
+
 """数据库管理：检测 MySQL/PostgreSQL/SQLite，建库建用户、查询、备份。"""
 import os
 

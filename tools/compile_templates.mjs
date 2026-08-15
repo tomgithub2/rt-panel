@@ -1,3 +1,5 @@
+// Created by 小杜 on 2026/08
+
 // 构建期模板预编译：把组件 template 字符串编译为 render 函数
 // 作用：运行时无需 Vue 编译器（无 eval），CSP 可保持 script-src 'self' 严格模式
 // 用法: node tools/compile_templates.mjs
