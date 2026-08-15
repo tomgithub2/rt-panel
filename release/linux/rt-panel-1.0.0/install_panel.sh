@@ -39,6 +39,7 @@ ok()   { printf "${GREEN}${BOLD}  ✔${RESET} ${GREY}%s${RESET}\n" "$1"; }
 step() { printf "\n${GOLD_L}${BOLD} ▶ %s${RESET}\n" "$1"; }
 info() { printf "   ${GREY}%s${RESET}\n" "$1"; }
 err()  { printf "${RED}${BOLD}  ✘ %s${RESET}\n" "$1"; }
+warn() { printf "${RED}  !${RESET} ${GREY}%s${RESET}\n" "$1"; }
 
 banner() {
 cat <<EOF
@@ -120,6 +121,16 @@ if [ -t 0 ]; then
     fi
 else
     info "非交互模式（管道安装），使用端口 $PORT"
+fi
+
+# ---------- 0.3 可选：面板域名（用于免费 HTTPS 证书） ----------
+DOMAIN="${RT_DOMAIN:-}"
+HTTPS_OK=""
+if [ -t 0 ]; then
+    printf "${GREY}  输入面板域名（可选，自动申请免费 HTTPS 证书，如 panel.example.com；回车跳过）: ${RESET}"
+    if read -t 40 -r input_domain 2>/dev/null && [ -n "$input_domain" ]; then
+        DOMAIN="$input_domain"
+    fi
 fi
 
 # ---------- 1. 自动安装运行环境 ----------
@@ -221,10 +232,56 @@ if [ ! -f .deps/OK ]; then
 fi
 ok "依赖就绪"
 
+# ---------- 4.5 免费 HTTPS 证书（可选：仅当提供了面板域名） ----------
+if [ -n "$DOMAIN" ]; then
+    step "申请免费 HTTPS 证书（Let's Encrypt）"
+    LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+    DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+    if [ -z "$DNS_IP" ]; then
+        warn "域名 $DOMAIN 无 A 记录解析，跳过 HTTPS（先把域名解析到本机 $LOCAL_IP 后重装或稍后用 rt 命令补办）"
+    elif [ "$DNS_IP" != "$LOCAL_IP" ]; then
+        warn "域名 $DOMAIN 解析到 $DNS_IP 而非本机 $LOCAL_IP，跳过 HTTPS"
+    elif ss -tln 2>/dev/null | grep -q ':80 '; then
+        warn "端口 80 被占用（证书验证需临时占用 80），跳过 HTTPS；可稍后在面板 设置→面板配置 开启自签 HTTPS"
+    else
+        (DEBIAN_FRONTEND=noninteractive apt-get install -y certbot >/dev/null 2>&1 || \
+         yum install -y certbot >/dev/null 2>&1 || \
+         dnf install -y certbot >/dev/null 2>&1 || true)
+        if command -v certbot >/dev/null 2>&1; then
+            # standalone 验证（临时监听 80）；deploy-hook 会在每次自动续期后重启面板加载新证书
+            if certbot certonly --standalone --non-interactive --agree-tos \
+                 --register-unsafely-without-email -d "$DOMAIN" \
+                 --deploy-hook "systemctl restart rt-panel 2>/dev/null || true" >/dev/null 2>&1; then
+                SSL_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+                SSL_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+                HTTPS_OK=1
+                ok "证书签发成功，面板将启用 HTTPS：https://$DOMAIN:$PORT（到期自动续期）"
+            else
+                warn "证书签发失败，面板保持 HTTP（域名解析到本机后可用 rt 命令重试）"
+            fi
+        else
+            warn "certbot 安装失败，面板保持 HTTP"
+        fi
+    fi
+fi
+
 # ---------- 5. 写入面板配置 ----------
 step "写入面板配置"
 mkdir -p "$INSTALL_DIR/backend/data"
-cat > "$INSTALL_DIR/backend/data/config.json" <<EOF
+if [ -n "$HTTPS_OK" ]; then
+    cat > "$INSTALL_DIR/backend/data/config.json" <<EOF
+{
+  "port": $PORT,
+  "bind_host": "0.0.0.0",
+  "site_name": "RT面板",
+  "account_server": "$ACCOUNT_SERVER",
+  "theme": "blackgold",
+  "ssl_cert": "$SSL_CERT",
+  "ssl_key": "$SSL_KEY"
+}
+EOF
+else
+    cat > "$INSTALL_DIR/backend/data/config.json" <<EOF
 {
   "port": $PORT,
   "bind_host": "0.0.0.0",
@@ -233,6 +290,7 @@ cat > "$INSTALL_DIR/backend/data/config.json" <<EOF
   "theme": "blackgold"
 }
 EOF
+fi
 # 生成网页初始化令牌（安装完成后在浏览器完成管理员账号 + 官网账户配置）
 SETUP_TOKEN=$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')
 printf '%s\n' "$SETUP_TOKEN" > "$INSTALL_DIR/backend/data/setup_token.txt"
@@ -284,6 +342,9 @@ printf "${GOLD}%s${RESET}\n" "  │         ${GOLD_L}${BOLD}R T 面 板 安 装 
 printf "${GOLD}%s${RESET}\n" "  └────────────────────────────────────────────┘"
 echo ""
 info "  访问地址:  ${GOLD_L}http://${IP:-服务器IP}:$PORT${RESET}"
+if [ -n "$HTTPS_OK" ]; then
+    info "  HTTPS 地址: ${GOLD_L}https://$DOMAIN:$PORT${RESET}（免费证书，到期自动续期）"
+fi
 info "  初始化令牌: ${GOLD_L}${BOLD}$SETUP_TOKEN${RESET}（仅用于首次初始化，用完即焚）"
 echo ""
 info "  下一步:    浏览器打开访问地址 → 输入初始化令牌 →"
