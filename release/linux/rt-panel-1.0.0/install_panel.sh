@@ -190,11 +190,34 @@ ok "已部署到 $INSTALL_DIR"
 # ---------- 4. 安装面板依赖 ----------
 step "安装面板依赖（首次约 1 分钟）"
 cd "$INSTALL_DIR/backend"
-if [ ! -d .deps ]; then
-    python3 -m pip install --upgrade pip >/dev/null 2>&1 || true
-    python3 -m pip install -r requirements.txt --target .deps \
+# 固定解释器：与 systemd 服务保持一致（避免 PATH 里出现其它版本 Python 导致 .so 不匹配）
+PY="/usr/bin/python3"
+[ -x "$PY" ] || PY="$(command -v python3)"
+# .deps 存在但缺少 OK 标记（上次安装不完整）→ 强制重装
+if [ ! -f .deps/OK ]; then
+    rm -rf .deps
+    $PY -m pip install --upgrade pip >/dev/null 2>&1 || true
+    # 首选清华镜像，失败自动回退官方 PyPI
+    $PY -m pip install -r requirements.txt --target .deps \
         -i https://pypi.tuna.tsinghua.edu.cn/simple || \
-    python3 -m pip install -r requirements.txt --target .deps
+    $PY -m pip install -r requirements.txt --target .deps || {
+        err "依赖安装失败，请检查网络后重试"
+        exit 1
+    }
+    # 用运行服务同一个解释器做导入验证（防镜像/平台错包）
+    if ! $PY -c "import sys; sys.path.insert(0,'.deps'); import fastapi, uvicorn, psutil, jwt, multipart, cryptography, pydantic_core; print('OK')" >/dev/null 2>&1; then
+        err "依赖校验失败（疑似镜像坏包），清除后改用官方 PyPI 重装"
+        rm -rf .deps
+        $PY -m pip install -r requirements.txt --target .deps || {
+            err "官方源重装仍失败，请检查网络后重试"
+            exit 1
+        }
+        $PY -c "import sys; sys.path.insert(0,'.deps'); import fastapi, uvicorn, psutil, jwt, multipart, cryptography, pydantic_core" || {
+            err "依赖最终校验失败，请联系客服"
+            exit 1
+        }
+    fi
+    echo "$($PY --version 2>&1) OK" > .deps/OK
 fi
 ok "依赖就绪"
 
@@ -225,7 +248,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=$INSTALL_DIR/backend
-ExecStart=/usr/bin/env python3 run.py
+ExecStart=/usr/bin/python3 run.py
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
