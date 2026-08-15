@@ -44,6 +44,7 @@ DEFAULTS = {
     'security_entrance': '',
     'ssl_cert': '',
     'ssl_key': '',
+    'panel_domain': '',
     'initialized': False,
 }
 

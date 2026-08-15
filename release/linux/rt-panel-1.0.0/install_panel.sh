@@ -123,14 +123,25 @@ else
     info "非交互模式（管道安装），使用端口 $PORT"
 fi
 
-# ---------- 0.3 可选：面板域名（用于免费 HTTPS 证书） ----------
+# ---------- 0.3 域名与 HTTPS：有没有域名？ ----------
 DOMAIN="${RT_DOMAIN:-}"
 HTTPS_OK=""
+HTTPS_ADDR=""
 if [ -t 0 ]; then
-    printf "${GREY}  输入面板域名（可选，自动申请免费 HTTPS 证书，如 panel.example.com；回车跳过）: ${RESET}"
-    if read -t 40 -r input_domain 2>/dev/null && [ -n "$input_domain" ]; then
-        DOMAIN="$input_domain"
+    printf "${GREY}  是否有域名用于面板访问？（回车=没有，直接用 IP 访问；有则输入 y）: ${RESET}"
+    if read -t 40 -r has_domain 2>/dev/null; then
+        case "$has_domain" in
+            y|Y|yes|YES|是|有)
+                printf "${GREY}  请输入面板域名（如 panel.example.com）: ${RESET}"
+                read -r DOMAIN || DOMAIN=""
+                ;;
+            *) info "未使用域名，面板将以 http://IP:$PORT 访问" ;;
+        esac
+    else
+        info "已超时，视为无域名，面板将以 http://IP:$PORT 访问"
     fi
+else
+    [ -n "$DOMAIN" ] && info "非交互模式，使用域名 $DOMAIN" || info "非交互模式，使用 IP 访问"
 fi
 
 # ---------- 1. 自动安装运行环境 ----------
@@ -232,35 +243,74 @@ if [ ! -f .deps/OK ]; then
 fi
 ok "依赖就绪"
 
-# ---------- 4.5 免费 HTTPS 证书（可选：仅当提供了面板域名） ----------
+# ---------- 4.5 域名与 HTTPS 证书（仅当提供了域名） ----------
 if [ -n "$DOMAIN" ]; then
-    step "申请免费 HTTPS 证书（Let's Encrypt）"
+    step "域名与 HTTPS 证书"
     LOCAL_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
     DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
-    if [ -z "$DNS_IP" ]; then
-        warn "域名 $DOMAIN 无 A 记录解析，跳过 HTTPS（先把域名解析到本机 $LOCAL_IP 后重装或稍后用 rt 命令补办）"
-    elif [ "$DNS_IP" != "$LOCAL_IP" ]; then
-        warn "域名 $DOMAIN 解析到 $DNS_IP 而非本机 $LOCAL_IP，跳过 HTTPS"
+    gen_self_cert() {
+        SELF_CERT_DIR="$INSTALL_DIR/backend/data/certs/panel"
+        mkdir -p "$SELF_CERT_DIR"
+        openssl req -x509 -nodes -newkey rsa:2048 -days 3650 \
+            -keyout "$SELF_CERT_DIR/panel.key" -out "$SELF_CERT_DIR/panel.crt" \
+            -subj "/CN=RT面板/O=RT Panel/C=CN" \
+            -addext "subjectAltName=IP:$LOCAL_IP${DOMAIN:+,DNS:$DOMAIN}" >/dev/null 2>&1 \
+            && SSL_CERT="$SELF_CERT_DIR/panel.crt" && SSL_KEY="$SELF_CERT_DIR/panel.key"
+    }
+    if [ -z "$DNS_IP" ] || [ "$DNS_IP" != "$LOCAL_IP" ]; then
+        # 域名记录不在本机 → 告知，证书申请到 IP（自签），之后用 IP+端口访问
+        warn "域名 $DOMAIN 的记录不在本机（当前解析：${DNS_IP:-无记录}，本机：$LOCAL_IP）"
+        if gen_self_cert; then
+            HTTPS_OK=1
+            HTTPS_ADDR="$LOCAL_IP"
+            ok "已为 IP $LOCAL_IP 生成自签证书，面板将以 https://$LOCAL_IP:$PORT 访问"
+            info "（Let's Encrypt 不支持裸 IP 证书；待域名解析到本机后，可在面板 设置→域名与 HTTPS 重新绑定换正式证书）"
+        else
+            warn "自签证书生成失败（需 openssl），面板保持 HTTP"
+        fi
     elif ss -tln 2>/dev/null | grep -q ':80 '; then
-        warn "端口 80 被占用（证书验证需临时占用 80），跳过 HTTPS；可稍后在面板 设置→面板配置 开启自签 HTTPS"
+        warn "端口 80 被占用，无法自动签发免费证书，改为 IP 自签证书"
+        if gen_self_cert; then
+            HTTPS_OK=1
+            HTTPS_ADDR="$LOCAL_IP"
+            ok "已生成自签证书（含域名与 IP），面板将以 https://$DOMAIN:$PORT 或 https://$LOCAL_IP:$PORT 访问"
+            info "（自签证书浏览器会提示不受信任，属正常现象；80 空闲后可到面板 设置→域名与 HTTPS 重新绑定换正式证书）"
+        else
+            warn "自签证书生成失败（需 openssl），面板保持 HTTP"
+        fi
     else
+        # 域名记录在本机 + 80 空闲 → Let's Encrypt 正式证书 → 域名访问
         (DEBIAN_FRONTEND=noninteractive apt-get install -y certbot >/dev/null 2>&1 || \
          yum install -y certbot >/dev/null 2>&1 || \
          dnf install -y certbot >/dev/null 2>&1 || true)
         if command -v certbot >/dev/null 2>&1; then
-            # standalone 验证（临时监听 80）；deploy-hook 会在每次自动续期后重启面板加载新证书
             if certbot certonly --standalone --non-interactive --agree-tos \
                  --register-unsafely-without-email -d "$DOMAIN" \
                  --deploy-hook "systemctl restart rt-panel 2>/dev/null || true" >/dev/null 2>&1; then
                 SSL_CERT="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
                 SSL_KEY="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
                 HTTPS_OK=1
-                ok "证书签发成功，面板将启用 HTTPS：https://$DOMAIN:$PORT（到期自动续期）"
+                HTTPS_ADDR="$DOMAIN"
+                ok "证书签发成功，面板将以 https://$DOMAIN:$PORT 访问（到期自动续期）"
             else
-                warn "证书签发失败，面板保持 HTTP（域名解析到本机后可用 rt 命令重试）"
+                warn "免费证书签发失败，改为 IP 自签证书"
+                if gen_self_cert; then
+                    HTTPS_OK=1
+                    HTTPS_ADDR="$LOCAL_IP"
+                    ok "已为 IP $LOCAL_IP 生成自签证书，面板将以 https://$LOCAL_IP:$PORT 访问"
+                else
+                    warn "自签证书生成失败（需 openssl），面板保持 HTTP"
+                fi
             fi
         else
-            warn "certbot 安装失败，面板保持 HTTP"
+            warn "certbot 安装失败，改为 IP 自签证书"
+            if gen_self_cert; then
+                HTTPS_OK=1
+                HTTPS_ADDR="$LOCAL_IP"
+                ok "已为 IP $LOCAL_IP 生成自签证书，面板将以 https://$LOCAL_IP:$PORT 访问"
+            else
+                warn "自签证书生成失败（需 openssl），面板保持 HTTP"
+            fi
         fi
     fi
 fi
@@ -343,7 +393,8 @@ printf "${GOLD}%s${RESET}\n" "  └───────────────
 echo ""
 info "  访问地址:  ${GOLD_L}http://${IP:-服务器IP}:$PORT${RESET}"
 if [ -n "$HTTPS_OK" ]; then
-    info "  HTTPS 地址: ${GOLD_L}https://$DOMAIN:$PORT${RESET}（免费证书，到期自动续期）"
+    info "  HTTPS 地址: ${GOLD_L}https://$HTTPS_ADDR:$PORT${RESET}"
+    info "  （后续修改/换绑域名：面板 设置→域名与 HTTPS）"
 fi
 info "  初始化令牌: ${GOLD_L}${BOLD}$SETUP_TOKEN${RESET}（仅用于首次初始化，用完即焚）"
 echo ""
