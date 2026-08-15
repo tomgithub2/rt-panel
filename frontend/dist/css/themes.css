@@ -1,0 +1,236 @@
+/* ============ RT面板 三主题配色系统（全部自研） ============
+ * 主题一：黑金 (blackgold) —— 奢华暗金
+ * 主题二：银黑 (silverblack) —— 冷冽曜银
+ * 主题三：白金 (lightgold) —— 明亮轻奢
+ */
+
+:root,
+:root[data-theme='blackgold'] {
+  /* 背景体系 */
+  --bg-base: #0a0a0d;
+  --bg-deep: #060608;
+  --bg-card: #121217;
+  --bg-elevated: #191920;
+  --bg-hover: #1f1f28;
+  --bg-sidebar: #0d0d11;
+  --bg-input: #0f0f14;
+
+  /* 文字 */
+  --text-primary: #ece7db;
+  --text-regular: #b8b2a3;
+  --text-secondary: #7d7869;
+  --text-inverse: #0a0a0d;
+
+  /* 金色主色系 */
+  --accent: #d4af37;
+  --accent-light: #f5d061;
+  --accent-deep: #8a6d1f;
+  --accent-glow: rgba(212, 175, 55, 0.35);
+  --accent-soft: rgba(212, 175, 55, 0.12);
+  --accent-grad: linear-gradient(135deg, #f5d061 0%, #d4af37 45%, #9a7a22 100%);
+  --accent-grad-soft: linear-gradient(135deg, rgba(245, 208, 97, 0.16), rgba(212, 175, 55, 0.05));
+
+  /* 边框与阴影 */
+  --border: rgba(212, 175, 55, 0.16);
+  --border-strong: rgba(212, 175, 55, 0.38);
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.55);
+  --shadow-glow: 0 0 24px rgba(212, 175, 55, 0.14);
+
+  /* 状态色 */
+  --success: #67c23a;
+  --warning: #e6a23c;
+  --danger: #f56c6c;
+  --info: #b8a85e;
+
+  /* Element Plus 映射 */
+  --el-color-primary: #d4af37;
+  --el-color-primary-light-3: #e0c25f;
+  --el-color-primary-light-5: #e9d388;
+  --el-color-primary-light-7: #f2e5b2;
+  --el-color-primary-light-8: #f6ecc8;
+  --el-color-primary-light-9: #faf4dd;
+  --el-color-primary-dark-2: #a98c2c;
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: var(--bg-elevated);
+  --el-fill-color-blank: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-regular);
+  --el-text-color-secondary: var(--text-secondary);
+  --el-border-color: var(--border);
+  --el-border-color-light: rgba(212, 175, 55, 0.1);
+  --el-border-color-lighter: rgba(212, 175, 55, 0.07);
+  --el-mask-color: --el-fill-color: #191920;
+  --el-fill-color-light: #1f1f28;
+  --el-fill-color-lighter: #23232d;
+  --el-fill-color-extra-light: #26262f;
+  --el-fill-color-dark: #101014;
+  --el-fill-color-darker: #0c0c10;
+  --el-bg-color-page: var(--bg-base);
+  --el-border-color-extra-light: rgba(212, 175, 55, 0.05);
+  --el-border-color-dark: rgba(212, 175, 55, 0.5);
+  --el-border-color-darker: rgba(212, 175, 55, 0.72);
+  --el-disabled-bg-color: var(--bg-input);
+  --el-disabled-text-color: var(--text-secondary);
+  --el-disabled-border-color: var(--border);
+  --el-box-shadow: 0 8px 32px rgba(0,0,0,.55);
+  --el-box-shadow-light: 0 4px 16px rgba(0,0,0,.4);
+  --el-box-shadow-lighter: 0 2px 8px rgba(0,0,0,.3);
+  --el-box-shadow-dark: 0 12px 48px rgba(0,0,0,.7);
+  rgba(6, 6, 8, 0.75);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-info: var(--info);
+}
+
+:root[data-theme='silverblack'] {
+  --bg-base: #0c0f14;
+  --bg-deep: #07090d;
+  --bg-card: #141922;
+  --bg-elevated: #1c2431;
+  --bg-hover: #232d3d;
+  --bg-sidebar: #0e1219;
+  --bg-input: #10151d;
+
+  --text-primary: #e6edf7;
+  --text-regular: #a8b6c9;
+  --text-secondary: #66748a;
+  --text-inverse: #0c0f14;
+
+  --accent: #b9c8dd;
+  --accent-light: #e2eaf5;
+  --accent-deep: #6f829c;
+  --accent-glow: rgba(185, 200, 221, 0.3);
+  --accent-soft: rgba(185, 200, 221, 0.1);
+  --accent-grad: linear-gradient(135deg, #f0f4fa 0%, #b9c8dd 40%, #71859e 100%);
+  --accent-grad-soft: linear-gradient(135deg, rgba(226, 234, 245, 0.14), rgba(185, 200, 221, 0.04));
+
+  --border: rgba(185, 200, 221, 0.15);
+  --border-strong: rgba(185, 200, 221, 0.36);
+  --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px rgba(150, 170, 200, 0.12);
+
+  --success: #4fc08d;
+  --warning: #d8a24a;
+  --danger: #e06c75;
+  --info: #8aa0ba;
+
+  --el-color-primary: #b9c8dd;
+  --el-color-primary-light-3: #c9d5e5;
+  --el-color-primary-light-5: #d8e1ec;
+  --el-color-primary-light-7: #e7edf4;
+  --el-color-primary-light-8: #eff3f8;
+  --el-color-primary-light-9: #f6f9fc;
+  --el-color-primary-dark-2: #94a0b1;
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: var(--bg-elevated);
+  --el-fill-color-blank: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-regular);
+  --el-text-color-secondary: var(--text-secondary);
+  --el-border-color: var(--border);
+  --el-border-color-light: rgba(185, 200, 221, 0.1);
+  --el-border-color-lighter: rgba(185, 200, 221, 0.07);
+  --el-mask-color: --el-fill-color: #1c2431;
+  --el-fill-color-light: #232d3d;
+  --el-fill-color-lighter: #28344a;
+  --el-fill-color-extra-light: #2c3a54;
+  --el-fill-color-dark: #10151d;
+  --el-fill-color-darker: #0c1016;
+  --el-bg-color-page: var(--bg-base);
+  --el-border-color-extra-light: rgba(185, 200, 221, 0.05);
+  --el-border-color-dark: rgba(185, 200, 221, 0.5);
+  --el-border-color-darker: rgba(185, 200, 221, 0.72);
+  --el-disabled-bg-color: var(--bg-input);
+  --el-disabled-text-color: var(--text-secondary);
+  --el-disabled-border-color: var(--border);
+  --el-box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  --el-box-shadow-light: 0 4px 16px rgba(0,0,0,.38);
+  --el-box-shadow-lighter: 0 2px 8px rgba(0,0,0,.28);
+  --el-box-shadow-dark: 0 12px 48px rgba(0,0,0,.68);
+  rgba(7, 9, 13, 0.75);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-info: var(--info);
+}
+
+/* ============ 白金主题（明亮轻奢） ============ */
+:root[data-theme='lightgold'] {
+  /* 背景体系（明亮） */
+  --bg-base: #f6f3ec;
+  --bg-deep: #efe9dd;
+  --bg-card: #fffdf8;
+  --bg-elevated: #fdfaf2;
+  --bg-hover: #f5efdf;
+  --bg-sidebar: #fdfbf5;
+  --bg-input: #fbf8f0;
+  --bg-glass: rgba(255, 253, 248, 0.88);
+
+  /* 文字 */
+  --text-primary: #2b2517;
+  --text-regular: #5f5542;
+  --text-secondary: #99907a;
+  --text-inverse: #ffffff;
+
+  /* 金色主色系（深金保证亮底对比度） */
+  --accent: #b8860b;
+  --accent-light: #8a6508;
+  --accent-deep: #6b4e06;
+  --accent-glow: rgba(184, 134, 11, 0.28);
+  --accent-soft: rgba(184, 134, 11, 0.09);
+  --accent-grad: linear-gradient(135deg, #e9c95f 0%, #b8860b 50%, #8a6508 100%);
+  --accent-grad-soft: linear-gradient(135deg, rgba(233, 201, 95, 0.35), rgba(184, 134, 11, 0.08));
+
+  /* 边框与阴影 */
+  --border: rgba(184, 134, 11, 0.25);
+  --border-strong: rgba(184, 134, 11, 0.5);
+  --shadow-card: 0 8px 28px rgba(120, 90, 20, 0.1);
+  --shadow-glow: 0 0 24px rgba(184, 134, 11, 0.18);
+
+  /* 状态色 */
+  --success: #4c9a52;
+  --warning: #c98a1b;
+  --danger: #d9534f;
+  --info: #a68a3c;
+
+  /* Element Plus 映射 */
+  --el-color-primary: #b8860b;
+  --el-color-primary-light-3: #c69c3c;
+  --el-color-primary-light-5: #d4b265;
+  --el-color-primary-light-7: #e2c88e;
+  --el-color-primary-light-8: #e9d3a6;
+  --el-color-primary-light-9: #f3e6c9;
+  --el-color-primary-dark-2: #936b09;
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: var(--bg-elevated);
+  --el-fill-color-blank: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-regular);
+  --el-text-color-secondary: var(--text-secondary);
+  --el-border-color: var(--border);
+  --el-border-color-light: rgba(184, 134, 11, 0.14);
+  --el-border-color-lighter: rgba(184, 134, 11, 0.08);
+  --el-mask-color: --el-fill-color: #fdfaf2;
+  --el-fill-color-light: #f5efdf;
+  --el-fill-color-lighter: #f0e9d8;
+  --el-fill-color-extra-light: #ece4cf;
+  --el-fill-color-dark: #e8e0cc;
+  --el-fill-color-darker: #ddd3ba;
+  --el-bg-color-page: var(--bg-base);
+  --el-border-color-extra-light: rgba(184, 134, 11, 0.06);
+  --el-border-color-dark: rgba(184, 134, 11, 0.5);
+  --el-border-color-darker: rgba(184, 134, 11, 0.7);
+  --el-disabled-bg-color: var(--bg-input);
+  --el-disabled-text-color: var(--text-secondary);
+  --el-disabled-border-color: var(--border);
+  --el-box-shadow: 0 8px 28px rgba(120, 90, 20, .1);
+  --el-box-shadow-light: 0 4px 14px rgba(120, 90, 20, .08);
+  --el-box-shadow-lighter: 0 2px 8px rgba(120, 90, 20, .05);
+  --el-box-shadow-dark: 0 12px 40px rgba(120, 90, 20, .16);
+  rgba(70, 58, 28, 0.5);
+  --el-color-success: var(--success);
+  --el-color-warning: var(--warning);
+  --el-color-danger: var(--danger);
+  --el-color-info: var(--info);
+}

@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>RT面板 · 安装向导</title>
+<hta:application
+  id="xdSetup"
+  applicationname="RT面板安装向导"
+  border="none"
+  innerborder="no"
+  caption="yes"
+  sysmenu="no"
+  maximizebutton="no"
+  minimizebutton="no"
+  windowstate="normal"
+  singleinstance="yes"
+  contextmenu="no"
+  selection="no"
+/>
+<script language="javascript">
+var FSO = new ActiveXObject("Scripting.FileSystemObject");
+var WSH = new ActiveXObject("WScript.Shell");
+var srcDir = location.pathname.replace(/\/[^\/]*$/, "").replace(/^\//, "");
+srcDir = decodeURIComponent(srcDir.replace(/\//g, "\\"));
+var logFile = WSH.ExpandEnvironmentStrings("%TEMP%") + "\\rt-install.log";
+var timer = null;
+var finished = false;
+var setupToken = "";
+var panelPort = 8000;
+
+function startInstall() {
+  if (finished) return;
+  var portEl = document.getElementById("portInput");
+  if (portEl) {
+    var v = parseInt(portEl.value, 10);
+    if (!isNaN(v) && v >= 1 && v <= 65535) panelPort = v;
+  }
+  document.getElementById("btnStart").style.display = "none";
+  document.getElementById("progressWrap").style.display = "block";
+  document.getElementById("consoleWrap").style.display = "block";
+  var ps = "powershell -NoProfile -ExecutionPolicy Bypass -File \"" + srcDir +
+           "\\install-core.ps1\" -Port " + panelPort;
+  WSH.Run(ps, 0, false);
+  timer = window.setInterval(poll, 400);
+}
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function poll() {
+  if (!FSO.FileExists(logFile)) return;
+  var text = "";
+  try { text = FSO.OpenTextFile(logFile, 1, false, -1).ReadAll(); } catch (e) {}
+  var lines = text.split(/\r?\n/).filter(function (l) { return l.length > 0; });
+  var consoleEl = document.getElementById("console");
+  consoleEl.innerHTML = "";
+  var pct = 5;
+  var maxPct = 5;
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    var cls = "log-line";
+    var raw = line.replace(/^\[\d\d:\d\d:\d\d\]\s*/, "");
+    if (raw.indexOf("错误") >= 0) { cls = "log-line err"; maxPct = Math.max(maxPct, 30); }
+    else if (raw.indexOf("警告") >= 0) { cls = "log-line warn"; }
+    var div = document.createElement("div");
+    div.className = cls;
+    div.innerHTML = esc(line);
+    consoleEl.appendChild(div);
+    if (raw.indexOf("管理员权限 OK") >= 0) maxPct = Math.max(maxPct, 12);
+    if (raw.indexOf("文件复制完成") >= 0) maxPct = Math.max(maxPct, 30);
+    if (raw.indexOf("Python 已就绪") >= 0 || raw.indexOf("Python 3.13 安装完成") >= 0) maxPct = Math.max(maxPct, 50);
+    if (raw.indexOf("依赖安装完成") >= 0) maxPct = Math.max(maxPct, 75);
+    if (raw.indexOf("开机自启注册成功") >= 0) maxPct = Math.max(maxPct, 88);
+    if (raw.indexOf("快捷方式创建完成") >= 0) maxPct = Math.max(maxPct, 93);
+  }
+  pct = Math.min(maxPct, 96);
+  document.getElementById("bar").style.width = pct + "%";
+  document.getElementById("pctText").innerHTML = pct + "%";
+  consoleEl.scrollTop = consoleEl.scrollHeight;
+
+  if (text.indexOf("安装流程全部完成") >= 0) {
+    finished = true;
+    window.clearInterval(timer);
+    var m = text.match(/初始化令牌[:：]\s*([0-9a-fA-F]{16})/);
+    if (m) setupToken = m[1];
+    var tokEl = document.getElementById("setupToken");
+    var tokLineEl = document.getElementById("setupTokenLine");
+    if (tokEl && setupToken) {
+      tokEl.innerHTML = esc(setupToken);
+    } else if (tokLineEl) {
+      tokLineEl.innerHTML = '初始化令牌请查看安装日志或数据目录 backend\\data\\setup_token.txt';
+    }
+    var addrEl = document.getElementById("panelAddr");
+    if (addrEl) addrEl.innerHTML = "http://127.0.0.1:" + panelPort;
+    document.getElementById("bar").style.width = "100%";
+    document.getElementById("pctText").innerHTML = "100%";
+    document.getElementById("barWrap").style.display = "none";
+    document.getElementById("successWrap").style.display = "block";
+  } else if (text.indexOf("错误:") >= 0 && text.indexOf("exit") >= 0) {
+    finished = true;
+    window.clearInterval(timer);
+    document.getElementById("failWrap").style.display = "block";
+  }
+}
+
+function openPanel() {
+  WSH.Run("start http://127.0.0.1:" + panelPort, 1, false);
+  window.close();
+}
+function closeWin() { window.close(); }
+</script>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; overflow: hidden;
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: #0a0a0d; color: #ece7db; }
+  .bg {
+    position: absolute; left: 0; top: 0; right: 0; bottom: 0;
+    background:
+      radial-gradient(700px 380px at 85% -10%, rgba(212,175,55,.18), transparent 60%),
+      radial-gradient(600px 340px at -10% 110%, rgba(212,175,55,.12), transparent 55%),
+      linear-gradient(180deg, #0b0b0f 0%, #060608 100%);
+  }
+  .glow {
+    position: absolute; width: 320px; height: 320px; border-radius: 50%;
+    background: rgba(212,175,55,.16); filter: blur(80px); top: -60px; left: 40%;
+  }
+  .wrap { position: relative; margin: 0 auto; width: 620px; padding-top: 46px; }
+  .card {
+    background: rgba(19,19,25,.92);
+    border: 1px solid rgba(212,175,55,.3);
+    border-radius: 16px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.6), 0 0 30px rgba(212,175,55,.12);
+    padding: 34px 42px 30px;
+  }
+  .logo {
+    width: 66px; height: 66px; margin: 0 auto 14px; border-radius: 16px;
+    background: linear-gradient(135deg, #f5d061 0%, #d4af37 45%, #9a7a22 100%);
+    color: #0a0a0d; font-size: 34px; font-weight: bold; text-align: center;
+    line-height: 66px; box-shadow: 0 0 34px rgba(212,175,55,.45);
+  }
+  h1 { margin: 0; text-align: center; font-size: 26px; letter-spacing: 3px;
+    background: linear-gradient(135deg, #f5d061, #d4af37, #9a7a22);
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .sub { text-align: center; color: #8d8677; font-size: 12px; letter-spacing: 3px; margin: 8px 0 22px; }
+  .steps { text-align: center; margin-bottom: 20px; }
+  .step {
+    display: inline-block; padding: 5px 12px; margin: 0 4px; border-radius: 999px;
+    font-size: 12px; color: #b8b2a3; border: 1px solid rgba(212,175,55,.25);
+    background: rgba(212,175,55,.06);
+  }
+  .btn {
+    display: block; margin: 6px auto 0; padding: 13px 0; width: 260px;
+    border: none; border-radius: 10px; cursor: pointer; font-size: 15px;
+    letter-spacing: 4px; color: #0a0a0d; font-weight: bold;
+    background: linear-gradient(135deg, #f5d061 0%, #d4af37 50%, #9a7a22 100%);
+    box-shadow: 0 6px 22px rgba(212,175,55,.35);
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn.ghost {
+    background: transparent; color: #b8b2a3;
+    border: 1px solid rgba(212,175,55,.35); box-shadow: none;
+  }
+  #progressWrap, #consoleWrap, #successWrap, #failWrap { display: none; }
+  .barOuter {
+    height: 10px; border-radius: 6px; background: #1c1c24;
+    border: 1px solid rgba(212,175,55,.2); overflow: hidden;
+  }
+  #bar {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #f5d061, #d4af37, #9a7a22);
+    box-shadow: 0 0 14px rgba(212,175,55,.6);
+  }
+  #pctText { text-align: center; color: #d4af37; font-size: 13px; margin-top: 8px; }
+  .console {
+    margin-top: 16px; height: 190px; overflow-y: scroll;
+    background: #0b0d10; border: 1px solid rgba(212,175,55,.18);
+    border-radius: 10px; padding: 12px 14px;
+    font-family: Consolas, "Courier New", monospace; font-size: 12px;
+  }
+  .log-line { color: #b8b2a3; line-height: 1.9; white-space: nowrap; }
+  .log-line.err { color: #f56c6c; }
+  .log-line.warn { color: #e6a23c; }
+  .ok-big { text-align: center; font-size: 44px; color: #67c23a; margin: 6px 0 10px; }
+  .info-box {
+    background: rgba(212,175,55,.07); border: 1px solid rgba(212,175,55,.28);
+    border-radius: 10px; padding: 14px 18px; margin: 14px 0; line-height: 2;
+    font-size: 13px;
+  }
+  .gold { color: #d4af37; }
+  .foot { text-align: center; color: #5b564a; font-size: 11px; margin-top: 16px; letter-spacing: 1px; }
+</style>
+</head>
+<body>
+<div class="bg"></div>
+<div class="glow"></div>
+<div class="wrap">
+  <div class="card">
+    <div class="logo">RT</div>
+    <h1>RT面板</h1>
+    <div class="sub">RT PANEL · 高端服务器运维面板 · 安装向导</div>
+
+    <div class="steps">
+      <span class="step">✔ 环境检测</span>
+      <span class="step">✔ 文件部署</span>
+      <span class="step">✔ 依赖安装</span>
+      <span class="step">✔ 开机自启</span>
+      <span class="step">✔ 快捷方式</span>
+    </div>
+
+    <div id="introWrap">
+      <div class="info-box">
+        安装目录：<span class="gold">C:\Program Files\RTPanel</span><br/>
+        面板端口：<input type="text" id="portInput" value="8000"
+                  style="width:90px;background:#0f0f14;color:#d4af37;border:1px solid rgba(212,175,55,.4);
+                         border-radius:6px;padding:4px 8px;font-size:14px;text-align:center" />
+        <span style="color:#8d8677">（1-65535，无效自动使用默认 8000）</span><br/>
+        说明：面板<b>永久免费</b>，安装完成后在<b>网页上</b>完成初始化：<br/>
+        设置管理员用户名/密码，并可用<b>RT面板官网账户</b>绑定本机机器码
+      </div>
+      <button class="btn" id="btnStart" onclick="startInstall()">开 始 安 装</button>
+    </div>
+
+    <div id="progressWrap">
+      <div class="barOuter"><div id="bar"></div></div>
+      <div id="pctText">0%</div>
+    </div>
+
+    <div id="consoleWrap">
+      <div class="console" id="console"></div>
+    </div>
+
+    <div id="successWrap">
+      <div class="ok-big">✓</div>
+      <div style="text-align:center;font-size:20px;color:#67c23a;letter-spacing:2px">安装完成</div>
+      <div class="info-box">
+        访问地址：<span class="gold" id="panelAddr">http://127.0.0.1:8000</span><br/>
+        <span id="setupTokenLine">初始化令牌：<span class="gold" id="setupToken" style="letter-spacing:2px"></span></span><br/>
+        下一步：浏览器打开访问地址 → 输入初始化令牌 →<br/>
+        在网页上设置管理员用户名/密码，并可绑定官网账户<br/>
+        <span style="color:#8d8677">免费版可绑 2 台机器 / 付费版可绑 10 台机器</span><br/>
+        <span style="color:#8d8677">命令行：新开终端输入 rt 管理面板（rt status/restart/info…）</span>
+      </div>
+      <button class="btn" onclick="openPanel()">打 开 面 板</button>
+      <button class="btn ghost" style="margin-top:10px" onclick="closeWin()">关 闭</button>
+    </div>
+
+    <div id="failWrap">
+      <div class="ok-big" style="color:#f56c6c">✘</div>
+      <div style="text-align:center;font-size:18px;color:#f56c6c">安装未完成</div>
+      <div class="info-box">请根据上方日志排查问题后，重新运行安装程序。</div>
+      <button class="btn ghost" onclick="closeWin()">关 闭</button>
+    </div>
+
+    <div class="foot">RT PANEL · 免费 · 安全 · 高端</div>
+  </div>
+</div>
+</body>
+</html>

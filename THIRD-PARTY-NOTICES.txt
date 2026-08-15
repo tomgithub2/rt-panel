@@ -1,0 +1,145 @@
+RT面板（RT Panel）
+第三方开源组件许可声明
+THIRD-PARTY NOTICES
+============================================================
+
+本产品（RT面板及官网）使用了以下第三方开源组件。
+各组件均为宽松许可证（MIT / BSD / Apache-2.0 / PSF），
+允许商业使用、修改与再分发；本文件保留其版权与许可声明，
+随软件一同分发，以履行各许可证的义务。
+
+------------------------------------------------------------
+一、前端（浏览器端，随发行包以 UMD 产物形式分发）
+------------------------------------------------------------
+1.  Vue.js                      MIT License        Copyright (c) 2013-present, Yuxi (Evan) You
+2.  Vue Router                  MIT License        Copyright (c) 2013-present, Yuxi (Evan) You
+3.  Element Plus                MIT License        Copyright (c) 2020-present, Element Plus Team
+4.  @element-plus/icons-vue     MIT License        Copyright (c) 2020-present, Element Plus Team
+5.  ECharts                     Apache License 2.0 Copyright (c) 2017-2023, Apache Software Foundation (ASF)
+6.  Axios                       MIT License        Copyright (c) 2014-present, Matt Zabriskie
+7.  Day.js                      MIT License        Copyright (c) 2018-present, iamkun
+8.  xterm.js                    MIT License        Copyright (c) 2017-2019, The xterm.js authors
+9.  @xterm/addon-fit            MIT License        Copyright (c) 2017-2019, The xterm.js authors
+
+------------------------------------------------------------
+二、后端（Python，运行时从 PyPI 安装）
+------------------------------------------------------------
+10. fastapi                     MIT License        Copyright (c) 2018-present, Sebastián Ramírez
+11. starlette                   BSD-3-Clause       Copyright (c) 2018-present, Encode OSS Ltd.
+12. uvicorn                     BSD-3-Clause       Copyright (c) 2017-present, Encode OSS Ltd.
+13. pydantic / pydantic-core    MIT License        Copyright (c) 2017-present, Samuel Colvin
+14. psutil                      BSD-3-Clause       Copyright (c) 2009, Jay Loden, Dave Daeschler, Giampaolo Rodola
+15. PyJWT                       MIT License        Copyright (c) 2015-2022, José Padilla
+16. cryptography                Apache-2.0 OR BSD-3-Clause
+                                                   Copyright (c) Individual contributors (Python Cryptographic Authority)
+17. python-multipart            Apache License 2.0 Copyright (c) 2012, Andrew Dunham
+18. websockets                  BSD-3-Clause       Copyright (c) 2013-2021, Aymeric Augustin and contributors
+19. pywinpty                    MIT License        Copyright (c) 2017, Spyder Project Contributors
+20. httptools                   MIT License        Copyright (c) MagicStack Inc.
+21. h11                         MIT License        Copyright (c) 2016, Nathaniel J. Smith and contributors
+22. anyio                       MIT License        Copyright (c) 2018, Alex Grönholm
+23. click                       BSD-3-Clause       Copyright (c) 2014, Pallets
+24. cffi                        MIT License        Copyright (c) 2005-2023, Armin Rigo, Maciej Fijalkowski and contributors
+25. idna                        BSD-3-Clause       Copyright (c) 2013-2024, Kim Davies
+26. pycparser                   BSD-3-Clause       Copyright (c) 2008-2022, Eli Bendersky
+27. PyYAML                      MIT License        Copyright (c) 2017-2021, Ingy döt Net; 2006-2016, Kirill Simonov
+28. typing_extensions           PSF-2.0            Copyright (c) Python Software Foundation
+29. colorama                    BSD License        Copyright (c) 2010, Jonathan Hartley
+30. python-dotenv               BSD-3-Clause       Copyright (c) 2014, Saurabh Kumar
+31. watchfiles                  MIT License        Copyright (c) 2021, Samuel Colvin
+
+------------------------------------------------------------
+三、许可证全文
+------------------------------------------------------------
+
+【MIT License】（适用于上述标注 MIT 的组件）
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+------------------------------------------------------------
+
+【BSD 3-Clause License】（适用于上述标注 BSD-3-Clause 的组件）
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+   this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+3. Neither the name of the copyright holder nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------
+
+【Apache License 2.0】（适用于 ECharts、cryptography、python-multipart）
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+（完整 Apache License 2.0 文本见 http://www.apache.org/licenses/LICENSE-2.0）
+
+------------------------------------------------------------
+
+【PSF License】（适用于 typing_extensions）
+
+1. This LICENSE AGREEMENT is between the Python Software Foundation
+   ("PSF"), and the Individual or Organization ("Licensee") accessing and
+   otherwise using this software ("Software") in source or binary form and
+   its associated documentation.
+2. Subject to the terms and conditions of this License Agreement, PSF
+   hereby grants Licensee a nonexclusive, royalty-free, world-wide license
+   to reproduce, analyze, test, perform and/or display publicly, prepare
+   derivative works, distribute, and otherwise use Software alone or in any
+   derivative version, provided, however, that PSF's License Agreement and
+   PSF's notice of copyright are retained in Software alone or in any
+   derivative version prepared by Licensee.
+（完整文本见 https://docs.python.org/3/license.html）
+
+------------------------------------------------------------
+说明：
+1. 上述所有许可证均允许将组件用于商业产品并进行销售，不要求
+   公开本产品源代码（非 copyleft）。
+2. 本产品自有代码的版权与授权见随包 LICENSE 文件。
+3. 各组件分发物（UMD 产物、PyPI 包）均保留原始版权头，未做修改。
+4. "Docker" 为 Docker Inc. 的商标；"Linux" 为 Linus Torvalds 的
+   商标；本产品仅在技术名词含义上使用，不构成背书或隶属关系。
