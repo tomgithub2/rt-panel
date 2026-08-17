@@ -24,6 +24,9 @@ export default {
       logDialog: { show: false, type: 'access', text: '', sid: null, domain: '', lines: 200, error: '' },
       setForm: { show: false, sid: null, domain: '', pseudo: '', custom_pseudo: '',
                  redirect: '', auth_user: '', auth_pass: '', hotlink: '', presets: [] },
+      appsDialog: { show: false, app: 'wordpress', domain: '', port: 80, with_db: true, with_ftp: false, busy: false },
+      appsList: [],
+      backupsDialog: { show: false, list: [] },
     }
   },
   watch: {
@@ -124,7 +127,61 @@ export default {
         f.show = false
       } catch (e) {}
     },
-    typeLabel(t) { return t === 'proxy' ? '反向代理' : '静态站点' },
+    typeLabel(t) { return t === 'proxy' ? '反向代理' : (t === 'php' ? 'PHP 站点' : '静态站点') },
+    openSite(row) {
+      const proto = location.protocol === 'https:' ? 'https' : 'http'
+      const port = row.port && row.port !== 80 ? ':' + row.port : ''
+      window.open(`${proto}://${row.domain}${port}`, '_blank')
+    },
+    async openApps() {
+      try { this.appsList = (await api.get('/websites/apps')).apps || [] } catch (e) { this.appsList = [] }
+      this.appsDialog = { show: true, app: this.appsList.length ? this.appsList[0].key : 'wordpress',
+                          domain: '', port: 80, with_db: true, with_ftp: false, busy: false }
+    },
+    async deployApp() {
+      const d = this.appsDialog
+      if (!d.domain) return ElMessage.warning('请输入域名')
+      d.busy = true
+      try {
+        const r = await api.post('/websites/deploy-app', {
+          domain: d.domain, app: d.app, port: Number(d.port) || 80,
+          with_db: d.with_db, with_ftp: d.with_ftp })
+        ElMessage.success(r.msg || '部署完成')
+        d.show = false
+        this.load()
+      } catch (e) {} finally { d.busy = false }
+    },
+    async openBackups() {
+      try {
+        const r = await api.get('/websites/backups')
+        this.backupsDialog = { show: true, list: r.list || [] }
+      } catch (e) {}
+    },
+    async backupSite(row) {
+      try {
+        const r = await api.post(`/websites/${row.id}/backup`)
+        ElMessage.success(`已备份：${r.name}`)
+      } catch (e) {}
+    },
+    async delBackup(row) {
+      try {
+        await this.$confirm(`删除备份 ${row.name}？`, '确认', { type: 'warning' })
+        await api.delete(`/websites/backups/${encodeURIComponent(row.name)}`)
+        this.openBackups()
+      } catch (e) {}
+    },
+    async downloadBackup(row) {
+      try {
+        const res = await api.get(`/websites/backups/${encodeURIComponent(row.name)}/download`,
+                                   { responseType: 'blob' })
+        const url = URL.createObjectURL(res)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = row.name
+        a.click()
+        URL.revokeObjectURL(url)
+      } catch (e) {}
+    },
   },
   render: (function(){ const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass } = Vue
 
@@ -213,6 +270,24 @@ return function render(_ctx, _cache) {
           ? (_openBlock(), _createElementBlock("span", _hoisted_4, " 未检测到 Nginx/Caddy（可在「软件商店」安装） "))
           : _createCommentVNode("v-if", true),
         _createElementVNode("div", _hoisted_5, [
+          _createVNode(_component_el_button, {
+            size: "small", type: "success", plain: "",
+            onClick: _ctx.openApps
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode("一键部署应用", -1 /* CACHED */)
+            ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["onClick"]),
+          _createVNode(_component_el_button, {
+            size: "small",
+            onClick: _ctx.openBackups
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode("备份中心", -1 /* CACHED */)
+            ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["onClick"]),
           (_ctx.hasPerm('websites:manage'))
             ? (_openBlock(), _createBlock(_component_el_button, {
                 key: 0,
@@ -235,6 +310,11 @@ return function render(_ctx, _cache) {
         ])
       ]),
       _createElementVNode("div", _hoisted_6, [
+        (!_ctx.sites.length)
+          ? (_openBlock(), _createElementBlock("div", { key: 0, style: {"text-align":"center","color":"var(--text-secondary)","padding":"44px 0"} }, [
+              _createTextVNode("还没有网站：点右上角「添加网站」一键建站（自动建数据库/FTP），或「一键部署应用」直接装 WordPress / Typecho。", -1 /* CACHED */)
+            ]))
+          : _createCommentVNode("v-if", true),
         _createVNode(_component_el_table, {
           data: _ctx.sites,
           size: "small"
@@ -301,10 +381,28 @@ return function render(_ctx, _cache) {
             }),
             _createVNode(_component_el_table_column, {
               label: "操作",
-              width: "280",
+              width: "400",
               fixed: "right"
             }, {
               default: _withCtx((s) => [
+                _createVNode(_component_el_button, {
+                  size: "small", type: "success",
+                  onClick: $event => (_ctx.openSite(s.row))
+                }, {
+                  default: _withCtx(() => [...(_cache[67] || (_cache[67] = [
+                    _createTextVNode("打开网站", -1 /* CACHED */)
+                  ]))]),
+                  _: 1 /* STABLE */
+                }, 8 /* PROPS */, ["onClick"]),
+                _createVNode(_component_el_button, {
+                  size: "small",
+                  onClick: $event => (_ctx.backupSite(s.row))
+                }, {
+                  default: _withCtx(() => [...(_cache[68] || (_cache[68] = [
+                    _createTextVNode("备份", -1 /* CACHED */)
+                  ]))]),
+                  _: 1 /* STABLE */
+                }, 8 /* PROPS */, ["onClick"]),
                 _createVNode(_component_el_button, {
                   size: "small",
                   onClick: $event => (_ctx.showConfig(s.row))
@@ -362,6 +460,121 @@ return function render(_ctx, _cache) {
         }, 8 /* PROPS */, ["data"])
       ])
     ]),
+    _createCommentVNode(" 一键部署应用对话框 "),
+    _createVNode(_component_el_dialog, {
+      modelValue: _ctx.appsDialog.show,
+      "onUpdate:modelValue": _cache[69] || (_cache[69] = $event => ((_ctx.appsDialog.show) = $event)),
+      title: "一键部署应用（宝塔式）",
+      width: "560px",
+      "close-on-click-modal": false
+    }, {
+      footer: _withCtx(() => [
+        _createElementVNode("div", _hoisted_17, [
+          _createVNode(_component_el_button, {
+            onClick: _cache[70] || (_cache[70] = $event => (_ctx.appsDialog.show = false))
+          }, {
+            default: _withCtx(() => [ _createTextVNode("取消", -1 /* CACHED */) ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["onClick"]),
+          _createVNode(_component_el_button, {
+            type: "primary",
+            disabled: _ctx.appsDialog.busy,
+            onClick: _ctx.deployApp
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode(_toDisplayString(_ctx.appsDialog.busy ? '部署中…' : '开始部署'), 1 /* TEXT */)
+            ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["disabled", "onClick"])
+        ])
+      ]),
+      default: _withCtx(() => [
+        _createElementVNode("div", { style: {"margin-bottom":"10px"} },
+          "选择要安装的程序，填好域名即可自动完成下载、解压、建站（可选自动建数据库与 FTP 账号）。", -1 /* CACHED */),
+        _createElementVNode("div", { style: {"display":"flex","flex-direction":"column","gap":"8px","margin-bottom":"12px"} },
+          _ctx.appsList.map(app => _createVNode(_component_el_tag, {
+            style: {"cursor":"pointer","padding":"10px 14px","height":"auto"},
+            type: _ctx.appsDialog.app === app.key ? 'primary' : 'info',
+            onClick: $event => (_ctx.appsDialog.app = app.key)
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode(_toDisplayString(app.name + '：' + app.desc + (app.php ? '（PHP）' : '')), 1 /* TEXT */)
+            ]),
+            _: 2 /* DYNAMIC */
+          }, 1032 /* PROPS, DYNAMIC_SLOTS */, ["style", "type", "onClick"])),
+          null),
+        _createVNode(_component_el_form, { "label-width": "90px" }, {
+          default: _withCtx(() => [
+            _createVNode(_component_el_form_item, { label: "域名" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_input, {
+                  modelValue: _ctx.appsDialog.domain,
+                  "onUpdate:modelValue": _cache[71] || (_cache[71] = $event => ((_ctx.appsDialog.domain) = $event)),
+                  placeholder: "例如 www.example.com"
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "端口" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_input, {
+                  modelValue: _ctx.appsDialog.port,
+                  "onUpdate:modelValue": _cache[72] || (_cache[72] = $event => ((_ctx.appsDialog.port) = $event)),
+                  style: {"width":"120px"}
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "自动建库" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_switch, {
+                  modelValue: _ctx.appsDialog.with_db,
+                  "onUpdate:modelValue": _cache[73] || (_cache[73] = $event => ((_ctx.appsDialog.with_db) = $event))
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "自动建 FTP" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_switch, {
+                  modelValue: _ctx.appsDialog.with_ftp,
+                  "onUpdate:modelValue": _cache[74] || (_cache[74] = $event => ((_ctx.appsDialog.with_ftp) = $event))
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            })
+          ]),
+          _: 1 /* STABLE */
+        })
+      ])
+    }),
+    _createCommentVNode(" 备份中心对话框 "),
+    _createVNode(_component_el_dialog, {
+      modelValue: _ctx.backupsDialog.show,
+      "onUpdate:modelValue": _cache[75] || (_cache[75] = $event => ((_ctx.backupsDialog.show) = $event)),
+      title: "网站备份中心",
+      width: "620px"
+    }, {
+      default: _withCtx(() => [
+        _createVNode(_component_el_table, { data: _ctx.backupsDialog.list, size: "small" }, {
+          default: _withCtx(() => [
+            _createVNode(_component_el_table_column, { prop: "name", label: "备份文件" }),
+            _createVNode(_component_el_table_column, { label: "大小" }, {
+              default: _withCtx((s) => [
+                _createTextVNode(_toDisplayString((s.row.size / 1048576).toFixed(2) + ' MB'), 1 /* TEXT */)
+              ])
+            }),
+            _createVNode(_component_el_table_column, { label: "操作" }, {
+              default: _withCtx((s) => [
+                _createVNode(_component_el_button, { size: "small", onClick: $event => (_ctx.downloadBackup(s.row)) }, { default: _withCtx(() => [ _createTextVNode("下载", -1 /* CACHED */) ]), _: 1 /* STABLE */ }, 8 /* PROPS */, ["onClick"]),
+                _createVNode(_component_el_button, { size: "small", type: "danger", onClick: $event => (_ctx.delBackup(s.row)) }, { default: _withCtx(() => [ _createTextVNode("删除", -1 /* CACHED */) ]), _: 1 /* STABLE */ }, 8 /* PROPS */, ["onClick"])
+              ])
+            })
+          ]),
+          _: 1 /* STABLE */
+        })
+      ])
+    }),
     _createCommentVNode(" 一键建站对话框 "),
     _createVNode(_component_el_dialog, {
       modelValue: _ctx.form.show,

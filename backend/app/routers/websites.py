@@ -1,18 +1,45 @@
-"""网站管理：静态站点 / 反向代理，生成 Nginx 或 Caddy 配置。"""
+"""网站管理：静态站点 / 反向代理 / PHP，生成 Nginx 或 Caddy 配置。"""
 import os
 import re
+import shutil
+import time
 from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..audit import audit
 from ..auth import get_client_ip, require_feature, require_perm
-from ..config import WWWROOT_DIR
+from ..config import BACKUP_DIR, WWWROOT_DIR
 from ..database import execute, now, query
 from ..utils.exec_utils import IS_WIN, run_cmd
 
 router = APIRouter(prefix='/api/websites', tags=['websites'],
                    dependencies=[Depends(require_feature('websites'))])
+
+
+# 宝塔式一键部署应用目录（官方稳定下载源，URL 固定不可由用户输入）
+SITE_APPS = {
+    'wordpress': {'name': 'WordPress', 'desc': '全球最流行的博客与建站程序（需 PHP+MySQL）',
+                  'url': 'https://wordpress.org/latest.zip', 'kind': 'zip',
+                  'php': True, 'db': True},
+    'wp-zh': {'name': 'WordPress 中文版', 'desc': 'WordPress 官方简体中文版（需 PHP+MySQL）',
+              'url': 'https://cn.wordpress.org/latest-zh_CN.zip', 'kind': 'zip',
+              'php': True, 'db': True},
+    'typecho': {'name': 'Typecho', 'desc': '轻量高效的开源博客程序（需 PHP+MySQL）',
+                'url': 'https://github.com/typecho/typecho/releases/download/v1.2.1/1.2.1.tar.gz',
+                'kind': 'targz', 'php': True, 'db': True},
+}
+
+
+def _php_fpm_sock() -> str:
+    """探测本机 PHP-FPM socket；找不到返回空串（应用照常部署，仅提示 PHP 暂不可解析）。"""
+    if IS_WIN:
+        return ''
+    import glob as _glob
+    for sock in _glob.glob('/run/php/*.sock') + _glob.glob('/var/run/php/*.sock'):
+        if os.path.exists(sock):
+            return sock
+    return ''
 
 
 def _safe_site_root(value: object) -> str:
@@ -128,7 +155,7 @@ def site_create(body: dict, request: Request, user: dict = Depends(require_perm(
     root = _safe_site_root(root)
     if not 1 <= port <= 65535:
         raise HTTPException(status_code=400, detail='端口无效')
-    if stype not in ('static', 'proxy') or engine not in ('nginx', 'caddy', 'apache'):
+    if stype not in ('static', 'proxy', 'php') or engine not in ('nginx', 'caddy', 'apache'):
         raise HTTPException(status_code=400, detail='站点类型或 Web 引擎无效')
     os.makedirs(root, exist_ok=True)
     # 静态站点生成默认首页
@@ -157,6 +184,159 @@ span{{color:#409eff}}</style></head><body><h1>欢迎访问 <span>{domain}</span>
     _render_nginx()
     audit(user['username'], get_client_ip(request), 'website_create', f'创建网站 {domain} ({stype})')
     return {'id': sid, 'db': db_info, 'ftp': ftp_info}
+
+
+# ---------------------------------------------------------------- 宝塔式一键部署
+@router.get('/apps')
+def site_apps(user: dict = Depends(require_perm('websites:view'))):
+    return {'apps': [{'key': k, **v} for k, v in SITE_APPS.items()]}
+
+
+@router.post('/deploy-app')
+def site_deploy_app(body: dict, request: Request,
+                    user: dict = Depends(require_perm('websites:manage'))):
+    """宝塔式一键部署：选程序 → 填域名 → 自动下载/安全解压/建站/建库/建 FTP。"""
+    import urllib.request as _urllib
+    from .files import _extract_tar_safely, _extract_zip_safely
+    domain = str(body.get('domain', '')).strip().lower()
+    app_key = str(body.get('app', '')).strip()
+    port = int(body.get('port', 80))
+    app = SITE_APPS.get(app_key)
+    if not re.match(r'^[a-z0-9\.\-\*]+$', domain):
+        raise HTTPException(status_code=400, detail='域名无效')
+    if not app:
+        raise HTTPException(status_code=400, detail='未知应用')
+    if query('SELECT id FROM websites WHERE domain=?', (domain,), one=True):
+        raise HTTPException(status_code=409, detail='该域名已存在')
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='端口无效')
+    root = os.path.join(WWWROOT_DIR, domain)
+    os.makedirs(root, exist_ok=True)
+
+    # 1. 下载（固定目录 URL，用户不可控）
+    from ..config import TMP_DIR
+    ts = str(int(now()))
+    tmp_pkg = os.path.join(TMP_DIR, f'app_{app_key}_{ts}.'
+                            + ('zip' if app['kind'] == 'zip' else 'tar.gz'))
+    tmp_ext = os.path.join(TMP_DIR, f'app_x_{ts}')
+    req = _urllib.request.Request(app['url'], headers={'User-Agent': 'RTPanel-Deploy/1.0'})
+    try:
+        with _urllib.request.urlopen(req, timeout=180) as resp, open(tmp_pkg, 'wb') as fh:
+            shutil.copyfileobj(resp, fh)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'应用下载失败: {e}')
+
+    # 2. 安全解压（防穿越/符号链接，复用文件管理安全解压器）
+    os.makedirs(tmp_ext, exist_ok=True)
+    try:
+        if app['kind'] == 'zip':
+            _extract_zip_safely(tmp_pkg, tmp_ext)
+        else:
+            _extract_tar_safely(tmp_pkg, tmp_ext, 'r:gz')
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'解压失败: {e}')
+
+    # 3. 包内单目录上移（wordpress/typecho 均包一个顶层目录）
+    children = [p for p in os.listdir(tmp_ext) if not p.startswith('.')]
+    if len(children) == 1 and os.path.isdir(os.path.join(tmp_ext, children[0])):
+        inner = os.path.join(tmp_ext, children[0])
+        for item in os.listdir(inner):
+            shutil.move(os.path.join(inner, item), os.path.join(root, item))
+    else:
+        for item in children:
+            shutil.move(os.path.join(tmp_ext, item), os.path.join(root, item))
+
+    # 4. 一键建库/建 FTP（可选）
+    db_info = ftp_info = None
+    if body.get('with_db') and app.get('db'):
+        db_info = _auto_create_db(domain, body.get('db_name', ''))
+    if body.get('with_ftp'):
+        ftp_info = _auto_create_ftp(domain, root, body.get('ftp_user', ''))
+
+    # 5. 建站（PHP 程序用 php 类型自动渲染 PHP-FPM 解析）
+    stype = 'php' if app.get('php') else 'static'
+    sid = execute(
+        'INSERT INTO websites (domain,root,port,type,engine,config,status,created_at) '
+        'VALUES (?,?,?,?,?,?,?,?)',
+        (domain, root, port, stype, 'nginx', '', 0, now()))
+    execute('INSERT OR IGNORE INTO site_settings (site_id) VALUES (?)', (sid,))
+    _render_nginx()
+    php_sock = _php_fpm_sock() if stype == 'php' else ''
+    audit(user['username'], get_client_ip(request), 'website_deploy_app',
+          f'一键部署 {app["name"]} → {domain}', 'warning')
+    try:
+        os.remove(tmp_pkg)
+        shutil.rmtree(tmp_ext, ignore_errors=True)
+    except Exception:
+        pass
+    return {'id': sid, 'db': db_info, 'ftp': ftp_info, 'php_sock': php_sock,
+            'msg': f'{app["name"]} 部署完成'
+                   + ('' if php_sock else '（未检测到 PHP-FPM，PHP 暂不可解析：请先安装 PHP）')}
+
+
+# ---------------------------------------------------------------- 网站备份（宝塔式一键备份）
+@router.get('/backups')
+def site_backups(user: dict = Depends(require_perm('websites:view'))):
+    backup_dir = os.path.join(BACKUP_DIR, 'websites')
+    if not os.path.isdir(backup_dir):
+        return {'list': []}
+    items = []
+    for fn in sorted(os.listdir(backup_dir), reverse=True):
+        fp = os.path.join(backup_dir, fn)
+        if os.path.isfile(fp):
+            items.append({'name': fn, 'size': os.path.getsize(fp),
+                          'mtime': os.path.getmtime(fp)})
+    return {'list': items}
+
+
+@router.post('/{sid}/backup')
+def site_backup(sid: int, request: Request,
+                user: dict = Depends(require_perm('websites:manage'))):
+    """一键备份网站目录为 zip（不走 shell，路径可含任意字符）。"""
+    site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    if not site:
+        raise HTTPException(status_code=404, detail='网站不存在')
+    root = os.path.realpath(site['root'])
+    if not os.path.isdir(root):
+        raise HTTPException(status_code=400, detail='站点目录不存在')
+    backup_dir = os.path.join(BACKUP_DIR, 'websites')
+    os.makedirs(backup_dir, exist_ok=True)
+    name = f'{site["domain"]}_{time.strftime("%Y%m%d_%H%M%S")}.zip'
+    out = os.path.join(backup_dir, name)
+    import zipfile
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in ('node_modules', '.git')]
+            for fn in filenames:
+                fp = os.path.join(dirpath, fn)
+                zf.write(fp, os.path.relpath(fp, root))
+    audit(user['username'], get_client_ip(request), 'website_backup',
+          f'备份网站 {site["domain"]}', 'warning')
+    return {'ok': True, 'name': name, 'size': os.path.getsize(out)}
+
+
+@router.get('/backups/{name}/download')
+def site_backup_download(name: str, user: dict = Depends(require_perm('websites:view'))):
+    from fastapi.responses import FileResponse
+    if not re.match(r'^[a-zA-Z0-9_.\-]{1,200}$', name):
+        raise HTTPException(status_code=400, detail='备份名无效')
+    fp = os.path.join(BACKUP_DIR, 'websites', name)
+    if not os.path.isfile(fp):
+        raise HTTPException(status_code=404, detail='备份不存在')
+    return FileResponse(fp, filename=name)
+
+
+@router.delete('/backups/{name}')
+def site_backup_delete(name: str, user: dict = Depends(require_perm('websites:manage'))):
+    if not re.match(r'^[a-zA-Z0-9_.\-]{1,200}$', name):
+        raise HTTPException(status_code=400, detail='备份名无效')
+    fp = os.path.join(BACKUP_DIR, 'websites', name)
+    if not os.path.isfile(fp):
+        raise HTTPException(status_code=404, detail='备份不存在')
+    os.remove(fp)
+    return {'ok': True}
 
 
 def _auto_create_db(domain: str, db_name: str = '') -> dict:
@@ -417,6 +597,16 @@ def _render_single(site: dict) -> str:
         extra += f'\n    # 伪静态规则\n    location / {{\n        {pseudo_rules}\n    }}\n'
     index_doc = (st.get('index_doc') or '').strip()
     index_line = f'    index {index_doc};' if index_doc else '    index index.html index.htm index.php;'
+    # PHP 站点：自动探测 PHP-FPM socket 并挂解析（一键部署的程序直接可用）
+    if site['type'] == 'php':
+        sock = _php_fpm_sock()
+        if sock:
+            extra += (f'\n    # PHP-FPM 解析（自动探测）\n'
+                      f'    location ~ \\.php$ {{\n'
+                      f'        fastcgi_pass unix:{sock};\n'
+                      f'        fastcgi_index index.php;\n'
+                      f'        include fastcgi_params;\n'
+                      f'    }}\n')
     if site['type'] == 'proxy':
         target = site['config']
         base = f'''server {{
