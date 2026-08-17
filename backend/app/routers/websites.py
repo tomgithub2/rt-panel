@@ -1,6 +1,7 @@
 """网站管理：静态站点 / 反向代理，生成 Nginx 或 Caddy 配置。"""
 import os
 import re
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -12,6 +13,22 @@ from ..utils.exec_utils import IS_WIN, run_cmd
 
 router = APIRouter(prefix='/api/websites', tags=['websites'],
                    dependencies=[Depends(require_feature('websites'))])
+
+
+def _safe_site_root(value: object) -> str:
+    root = os.path.abspath(str(value or '').strip())
+    if not root or any(ch in root for ch in ('\x00', '\n', '\r', ';', '{', '}', '"', "'")):
+        raise HTTPException(status_code=400, detail='站点目录包含不安全字符')
+    return root
+
+
+def _safe_proxy_target(value: object) -> str:
+    target = str(value or '').strip()
+    parsed = urlparse(target)
+    if (parsed.scheme not in ('http', 'https') or not parsed.netloc or
+            any(ch.isspace() for ch in target) or any(ch in target for ch in (';', '{', '}', '"', "'"))):
+        raise HTTPException(status_code=400, detail='反向代理地址必须为有效的 HTTP(S) URL')
+    return target
 
 
 def _find_engine() -> str:
@@ -73,7 +90,10 @@ def _site_running(site: dict) -> bool:
     if site['engine'] == 'nginx' and site['type'] == 'static':
         # 拿 nginx -T 全文 grep 判断站点在不在跑，土但好用
         # return bool(os.popen('pgrep nginx').read())  # 已弃用（换机器误报），保留参考
-        checkRst = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {site["domain"]};"',
+        domain = str(site.get('domain') or '')
+        if not re.match(r'^[a-z0-9\.\-\*]+$', domain):
+            return False
+        checkRst = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {domain};"',
                            timeout=20, shell=True)
         return checkRst['code'] == 0
     return False
@@ -105,6 +125,11 @@ def site_create(body: dict, request: Request, user: dict = Depends(require_perm(
         raise HTTPException(status_code=409, detail='该域名已存在')
     if not root:
         root = os.path.join(WWWROOT_DIR, domain)
+    root = _safe_site_root(root)
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='端口无效')
+    if stype not in ('static', 'proxy') or engine not in ('nginx', 'caddy', 'apache'):
+        raise HTTPException(status_code=400, detail='站点类型或 Web 引擎无效')
     os.makedirs(root, exist_ok=True)
     # 静态站点生成默认首页
     index = os.path.join(root, 'index.html')
@@ -116,9 +141,7 @@ def site_create(body: dict, request: Request, user: dict = Depends(require_perm(
 font-family:system-ui;background:#0f1420;color:#dfe6f5}}h1{{font-weight:500}}
 span{{color:#409eff}}</style></head><body><h1>欢迎访问 <span>{domain}</span></h1>
 <p style="position:fixed;bottom:16px;color:#5b6b85">由 RT面板 运维面板托管</p></body></html>''')
-    target = str(body.get('target', '')).strip()
-    if stype == 'proxy' and not target:
-        raise HTTPException(status_code=400, detail='反向代理需要填写目标地址')
+    target = _safe_proxy_target(body.get('target', '')) if stype == 'proxy' else ''
     # 一键建站（超越宝塔）：可选同时创建同名 MySQL 数据库 + FTP 账号
     db_info = None
     if body.get('with_db'):
@@ -179,8 +202,9 @@ def _auto_create_ftp(domain: str, root: str, ftp_user: str = '') -> dict:
     else:
         user = 'ftp_' + re.sub(r'[^a-z0-9_]', '_', domain)[:20].strip('_')
     pwd = _secrets.token_hex(6)
-    r1 = run_cmd(f'useradd -m -d "{root}" -s /sbin/nologin {user} 2>&1 || true', timeout=20, shell=True)
-    r2 = run_cmd(f'echo "{user}:{pwd}" | chpasswd', timeout=20, shell=True)
+    # 参数列表与 stdin 避免站点目录或口令进入 shell。
+    run_cmd(['useradd', '-m', '-d', root, '-s', '/sbin/nologin', user], timeout=20, shell=False)
+    r2 = run_cmd(['chpasswd'], timeout=20, shell=False, input_text=f'{user}:{pwd}\n')
     if r2['code'] != 0:
         return {'ok': False, 'error': 'FTP 账号创建失败：' + (r2['stderr'] or '')[:150]}
     return {'ok': True, 'user': user, 'password': pwd, 'dir': root}
@@ -217,9 +241,11 @@ def site_update(sid: int, body: dict, request: Request,
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
-    root = body.get('root', site['root'])
-    config = body.get('config', site['config'])
+    root = _safe_site_root(body.get('root', site['root']))
+    config = _safe_proxy_target(body.get('config', site['config'])) if site['type'] == 'proxy' else ''
     port = int(body.get('port', site['port']))
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='端口无效')
     execute('UPDATE websites SET root=?, config=?, port=? WHERE id=?', (root, config, port, sid))
     _render_nginx()
     _reload_nginx()
@@ -313,9 +339,13 @@ def site_put_settings(sid: int, body: dict, request: Request,
         raise HTTPException(status_code=400, detail='默认文档无效')
     if redirect and not redirect.startswith(('http://', 'https://', '/')):
         raise HTTPException(status_code=400, detail='重定向地址需以 http(s):// 或 / 开头')
+    if auth_user and not re.match(r'^[A-Za-z0-9_.-]{1,50}$', auth_user):
+        raise HTTPException(status_code=400, detail='目录认证用户名仅支持字母、数字、点、下划线和连字符')
     auth_hash = ''
     if auth_user and auth_pass:
-        r = run_cmd(f'openssl passwd -apr1 "{auth_pass}"', timeout=10, shell=True)
+        # 密码经 stdin 传递，不能拼接进 shell 命令（否则引号可导致命令注入）。
+        r = run_cmd(['openssl', 'passwd', '-apr1', '-stdin'], timeout=10,
+                    shell=False, input_text=auth_pass)
         if r['code'] != 0:
             raise HTTPException(status_code=400, detail='密码加密失败（需安装 openssl）')
         auth_hash = r['stdout'].strip()

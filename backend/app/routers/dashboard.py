@@ -7,9 +7,10 @@ import time
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
-from ..auth import get_current_user
+from ..auth import decode_token, get_current_user
 from ..config import PANEL_VERSION, get_config
 from ..database import now, query
+from ..rbac import role_permissions
 from ..utils import sysinfo
 
 router = APIRouter(prefix='/api/dashboard', tags=['dashboard'])
@@ -53,20 +54,44 @@ def sparkline(minutes: int = 30, user: dict = Depends(get_current_user)):
 
 @router.websocket('/ws/realtime')
 async def ws_realtime(ws: WebSocket):
-    """实时推送：每 2 秒发送 {cpu,mem,net_rx,net_tx,load1,ts}。"""
+    """实时推送：每 2 秒发送经过认证的 CPU、内存和网络速率。"""
+    # 浏览器 WebSocket 无法携带 Authorization 头，令牌由前端以查询参数传入。
+    # 认证必须在 accept 前完成，避免匿名客户端订阅主机实时状态。
+    token = ws.query_params.get('token', '')
+    try:
+        payload = decode_token(token)
+        user = query('SELECT id,role FROM users WHERE id=? AND status=1',
+                     (payload['uid'],), one=True)
+        if not user or (user['role'] != 'admin' and
+                        'dashboard:view' not in role_permissions(user['role'])):
+            raise ValueError('user disabled')
+    except Exception:
+        await ws.close(code=1008, reason='Unauthorized')
+        return
+
     await ws.accept()
+    previous_net = None
+    previous_ts = None
     try:
         while True:
             try:
                 memInfo = sysinfo.psutil.virtual_memory()
                 netIo = sysinfo.psutil.net_io_counters()
+                current_ts = time.time()
+                if previous_net is None or previous_ts is None:
+                    rx_rate = tx_rate = 0
+                else:
+                    elapsed = max(current_ts - previous_ts, 0.001)
+                    rx_rate = max(0, (netIo.bytes_recv - previous_net.bytes_recv) / elapsed)
+                    tx_rate = max(0, (netIo.bytes_sent - previous_net.bytes_sent) / elapsed)
+                previous_net, previous_ts = netIo, current_ts
                 loadAvg = sysinfo.os.getloadavg() if hasattr(sysinfo.os, 'getloadavg') else (0, 0, 0)
                 pushBody = {
-                    'ts': time.time(),
+                    'ts': current_ts,
                     'cpu': sysinfo.psutil.cpu_percent(interval=None),
                     'mem': memInfo.percent,
-                    'net_rx': netIo.bytes_recv,
-                    'net_tx': netIo.bytes_sent,
+                    'net_rx': rx_rate,
+                    'net_tx': tx_rate,
                     'load1': loadAvg[0] if loadAvg else 0,
                 }
                 await ws.send_text(json.dumps(pushBody))

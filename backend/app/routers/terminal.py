@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
 from ..auth import decode_token, get_current_user
 from ..audit import audit
+from ..database import query
+from ..rbac import role_permissions
 
 router = APIRouter(tags=['terminal'])
 
@@ -102,6 +104,12 @@ async def ws_terminal(ws: WebSocket):
     token = ws.query_params.get('token', '')
     try:
         payload = decode_token(token)
+        user = query('SELECT * FROM users WHERE id=? AND status=1',
+                     (payload.get('uid'),), one=True)
+        if not user or (user['role'] != 'admin' and
+                        'terminal:use' not in role_permissions(user['role'])):
+            await ws.close(code=4403)
+            return
     except Exception:
         await ws.close(code=4401)
         return
@@ -113,7 +121,7 @@ async def ws_terminal(ws: WebSocket):
         await ws.send_text(json.dumps({'type': 'exit', 'msg': f'终端启动失败: {e}'}))
         await ws.close()
         return
-    audit(payload.get('username', ''), ws.client.host if ws.client else '',
+    audit(user['username'], ws.client.host if ws.client else '',
           'terminal_open', '打开 Web 终端')
     loop = asyncio.get_event_loop()
     stop = threading.Event()

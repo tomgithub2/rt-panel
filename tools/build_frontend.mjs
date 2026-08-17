@@ -46,4 +46,16 @@ for (const t of targets) {
   })
   console.log(`[OK] ${t.label}: ${t.out}${minify ? '（已压缩）' : ''}`)
 }
+
+// 官网 index.html 自动打缓存戳（app.js?v=<时间戳>），避免用户浏览器缓存旧包
+import { readFileSync, writeFileSync } from 'node:fs'
+try {
+# [官网相关路径已脱敏：官网不开源，内部结构不公开]
+  const html = readFileSync(siteHtmlPath, 'utf-8')
+  const stamp = String(Date.now()).slice(0, 10)
+  writeFileSync(siteHtmlPath, html.replace(/(app\.js)(\?v=[^"]*)?(")/, `$1?v=${stamp}$3`))
+  console.log(`[OK] index.html 缓存戳已更新: app.js?v=${stamp}`)
+} catch {
+  console.log('[!] index.html 缓存戳更新失败（文件不存在则忽略）')
+}
 console.log('[OK] 构建完成：index.html 已引用 app.js（经典脚本，无 ES Module 依赖）')

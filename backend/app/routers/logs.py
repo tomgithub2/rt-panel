@@ -91,7 +91,7 @@ def read_log(key: str = 'audit', lines: int = 200, search: str = '',
 def _tail_file(path: str, lines: int):
     if not os.path.isfile(path):
         return {'type': 'raw', 'content': f'文件不存在: {path}'}
-    r = run_cmd(f'tail -n {lines} {path}', timeout=20, shell=True)
+    r = run_cmd(['tail', '-n', str(lines), path], timeout=20, shell=False)
     return {'type': 'raw', 'content': r['stdout'] if r['code'] == 0 else r['stderr']}
 
 
@@ -101,7 +101,7 @@ def tail_file(path: str, lines: int = 100,
     """任意日志文件 tail（复用文件管理权限语义）。"""
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail='文件不存在')
-    r = run_cmd(f'tail -n {min(lines, 2000)} "{path}"', timeout=20, shell=True)
+    r = run_cmd(['tail', '-n', str(min(lines, 2000)), path], timeout=20, shell=False)
     return {'content': r['stdout'], 'path': path}
 
 

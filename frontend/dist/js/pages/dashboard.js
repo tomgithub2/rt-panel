@@ -8,9 +8,11 @@ export default {
       loading: true,
       data: null,
       charts: {},
-      series: { cpu: [], mem: [], net: [] },
+      series: { cpu: [], mem: [], net: { rx: [], tx: [] } },
       ws: null,
       refreshTimer: null,
+      wsReconnectTimer: null,
+      destroyed: false,
     }
   },
   mounted() {
@@ -18,12 +20,16 @@ export default {
     this.refreshTimer = setInterval(() => this.load(false), 15000)
     this.connectWS()
     window.addEventListener('resize', this.resizeAll)
+    document.addEventListener('visibilitychange', this.handleVisibility)
   },
   beforeUnmount() {
+    this.destroyed = true
     clearInterval(this.refreshTimer)
+    clearTimeout(this.wsReconnectTimer)
     if (this.ws) this.ws.close()
     Object.values(this.charts).forEach(c => c && c.dispose())
     window.removeEventListener('resize', this.resizeAll)
+    document.removeEventListener('visibilitychange', this.handleVisibility)
   },
   methods: {
     fmtBytes, fmtRate, fmtTime, fmtUptime,
@@ -40,15 +46,29 @@ export default {
     },
     async loadSpark() {
       const r = await api.get('/dashboard/sparkline?minutes=60')
-      this.series.cpu = r.list.map(x => [x.ts * 1000, x.cpu])
-      this.series.mem = r.list.map(x => [x.ts * 1000, x.mem])
-      this.series.net = r.list.map(x => [x.ts * 1000, x.net_rx, x.net_tx])
+      const list = r.list || []
+      this.series.cpu = list.map(x => [x.ts * 1000, x.cpu])
+      this.series.mem = list.map(x => [x.ts * 1000, x.mem])
+      // metric_raw 保存的是累计字节数；在展示层转换为每秒速率，避免曲线只会不断上涨。
+      this.series.net = { rx: [], tx: [] }
+      list.forEach((x, index) => {
+        if (!index) return
+        const prev = list[index - 1]
+        const seconds = Math.max(x.ts - prev.ts, 1)
+        this.series.net.rx.push([x.ts * 1000, Math.max(0, (x.net_rx - prev.net_rx) / seconds)])
+        this.series.net.tx.push([x.ts * 1000, Math.max(0, (x.net_tx - prev.net_tx) / seconds)])
+      })
     },
     connectWS() {
+      if (this.destroyed || document.hidden || (this.ws && this.ws.readyState !== WebSocket.CLOSED)) return
+      clearTimeout(this.wsReconnectTimer)
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const token = localStorage.getItem('ops_token')
-      this.ws = new WebSocket(`${proto}://${location.host}/api/dashboard/ws/realtime?token=${token}`)
-      this.ws.onmessage = (ev) => {
+      if (!token) return
+      const socket = new WebSocket(`${proto}://${location.host}/api/dashboard/ws/realtime?token=${encodeURIComponent(token)}`)
+      this.ws = socket
+      socket.onopen = () => { clearTimeout(this.wsReconnectTimer) }
+      socket.onmessage = (ev) => {
         try {
           const d = JSON.parse(ev.data)
           if (!this.data) return
@@ -57,18 +77,31 @@ export default {
           // 追加实时点
           this.series.cpu.push([d.ts * 1000, d.cpu])
           this.series.mem.push([d.ts * 1000, d.mem])
-          if (this.series.net.length) {
-            const last = this.series.net[this.series.net.length - 1]
-            this.series.net.push([d.ts * 1000, d.net_rx, d.net_tx])
-          }
+          this.data.net.rx_rate = d.net_rx
+          this.data.net.tx_rate = d.net_tx
+          this.series.net.rx.push([d.ts * 1000, d.net_rx])
+          this.series.net.tx.push([d.ts * 1000, d.net_tx])
           const keep = 400
           if (this.series.cpu.length > keep) this.series.cpu.splice(0, this.series.cpu.length - keep)
           if (this.series.mem.length > keep) this.series.mem.splice(0, this.series.mem.length - keep)
-          if (this.series.net.length > keep) this.series.net.splice(0, this.series.net.length - keep)
+          ;['rx', 'tx'].forEach(key => {
+            if (this.series.net[key].length > keep) this.series.net[key].splice(0, this.series.net[key].length - keep)
+          })
           this.renderCharts()
         } catch (e) {}
       }
-      this.ws.onclose = () => { setTimeout(() => { if (!document.hidden) this.connectWS() }, 5000) }
+      socket.onerror = () => socket.close()
+      socket.onclose = (event) => {
+        if (this.ws !== socket) return
+        this.ws = null
+        // 1008 表示登录失效或未授权；继续重连不会恢复，只会制造无效请求。
+        if (this.destroyed || document.hidden || event.code === 1008) return
+        clearTimeout(this.wsReconnectTimer)
+        this.wsReconnectTimer = setTimeout(() => this.connectWS(), 5000)
+      }
+    },
+    handleVisibility() {
+      if (!document.hidden) this.connectWS()
     },
     chartOption(metric, title, color, unit = '%') {
       const data = this.series[metric] || []
@@ -77,12 +110,20 @@ export default {
         title: { text: title, left: 10, top: 0, textStyle: { color: 'var(--text-regular)', fontSize: 13, fontWeight: 500 } },
         tooltip: { trigger: 'axis', backgroundColor: 'rgba(10,10,14,.9)', borderColor: 'var(--border-strong)',
                    textStyle: { color: 'var(--text-primary)' },
-                   valueFormatter: v => v == null ? '-' : (metric === 'net' ? fmtBytes(v) : v + unit) },
+                   valueFormatter: v => v == null ? '-' : (metric === 'net' ? fmtRate(v) : v + unit) },
         xAxis: { type: 'time', axisLine: { lineStyle: { color: 'var(--border)' } },
                  axisLabel: { color: 'var(--text-secondary)', formatter: '{HH}:{mm}' } },
         yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(128,128,140,.12)' } },
-                 axisLabel: { color: 'var(--text-secondary)' } },
-        series: [{
+                 axisLabel: { color: 'var(--text-secondary)', formatter: value => metric === 'net' ? fmtRate(value) : value + unit } },
+        series: metric === 'net' ? [{
+          name: '下载', type: 'line', smooth: true, showSymbol: false, data: data.rx,
+          lineStyle: { width: 2, color: '#409eff' },
+          areaStyle: { color: 'rgba(64,158,255,.12)' },
+        }, {
+          name: '上传', type: 'line', smooth: true, showSymbol: false, data: data.tx,
+          lineStyle: { width: 2, color: '#e6a23c' },
+          areaStyle: { color: 'rgba(230,162,60,.08)' },
+        }] : [{
           type: 'line', smooth: true, showSymbol: false, data,
           lineStyle: { width: 2, color },
           areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,

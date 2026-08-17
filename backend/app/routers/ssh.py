@@ -19,8 +19,11 @@ _PARSE_KEYS = ('Port', 'PermitRootLogin', 'PasswordAuthentication',
 
 
 def _read_sshd_config() -> str:
-    r = run_cmd(f'cat {SSHD_CONFIG}', timeout=10, shell=True)
-    return r['stdout'] if r['code'] == 0 else ''
+    try:
+        with open(SSHD_CONFIG, 'r', encoding='utf-8', errors='replace') as fh:
+            return fh.read()
+    except Exception:
+        return ''
 
 
 def _parse_sshd(text: str) -> dict:
@@ -52,7 +55,7 @@ def _parse_sshd(text: str) -> dict:
 
 def _service_status() -> str:
     for svc in ('ssh', 'sshd'):
-        r = run_cmd(f'systemctl is-active {svc}', timeout=10, shell=True)
+        r = run_cmd(['systemctl', 'is-active', svc], timeout=10, shell=False)
         if r['code'] == 0:
             return r['stdout'].strip()
     return 'inactive'
@@ -60,7 +63,7 @@ def _service_status() -> str:
 
 def _restart_ssh() -> bool:
     for svc in ('ssh', 'sshd'):
-        r = run_cmd(f'systemctl restart {svc} 2>&1', timeout=60, shell=True)
+        r = run_cmd(['systemctl', 'restart', svc], timeout=60, shell=False)
         if r['code'] == 0:
             return True
     return False
@@ -109,25 +112,45 @@ def ssh_config_update(body: dict, request: Request,
 
     # 先备份，失败即止
     bak = SSHD_CONFIG + '.rtbak'
-    cp = run_cmd(f'cp -a {SSHD_CONFIG} {bak}', timeout=10, shell=True)
-    if cp['code'] != 0:
+    try:
+        import shutil
+        shutil.copy2(SSHD_CONFIG, bak)
+    except Exception:
         raise HTTPException(status_code=400, detail='备份 sshd_config 失败（需 root 权限）')
 
-    # 自研安全写法：sed 就地删除旧键值行（含注释），再追加规范行，避免多行冲突
+    # 纯 Python 改写：去掉旧键值行（含注释），再按规范值追加，全程不走 shell
     changes = (('Port', str(port)), ('PermitRootLogin', permit_root),
                ('PasswordAuthentication', password_auth), ('PubkeyAuthentication', pubkey_auth))
-    for key, val in changes:
-        run_cmd(f"sed -i -E '/^[[:space:]]*#?[[:space:]]*{key}([[:space:]]|$)/d' {SSHD_CONFIG}",
-                timeout=10, shell=True)
-        run_cmd(f"echo '{key} {val}' >> {SSHD_CONFIG}", timeout=10, shell=True)
+    change_keys = {k for k, _ in changes}
+    try:
+        with open(SSHD_CONFIG, 'r', encoding='utf-8', errors='replace') as fh:
+            lines = fh.read().splitlines()
+        kept = []
+        for ln in lines:
+            m = re.match(r'^\s*#?\s*([A-Za-z][A-Za-z0-9]*)\s+', ln)
+            if m and m.group(1) in change_keys:
+                continue
+            kept.append(ln)
+        for key, val in changes:
+            kept.append(f'{key} {val}')
+        with open(SSHD_CONFIG, 'w', encoding='utf-8') as fh:
+            fh.write('\n'.join(kept) + '\n')
+    except Exception as e:
+        try:
+            shutil.copy2(bak, SSHD_CONFIG)
+        except Exception:
+            pass
+        raise HTTPException(status_code=400, detail=f'改写 sshd_config 失败，已回滚: {e}')
 
     # sshd -t 校验；失败则恢复备份并 400
-    sshd_bin = 'sshd'
-    if run_cmd('command -v sshd >/dev/null 2>&1', timeout=10, shell=True)['code'] != 0:
-        sshd_bin = '/usr/sbin/sshd'
-    t = run_cmd(f'{sshd_bin} -t 2>&1', timeout=30, shell=True)
+    import shutil as _shutil
+    sshd_bin = _shutil.which('sshd') or '/usr/sbin/sshd'
+    t = run_cmd([sshd_bin, '-t'], timeout=30, shell=False)
     if t['code'] != 0:
-        run_cmd(f'cp -a {bak} {SSHD_CONFIG}', timeout=10, shell=True)
+        try:
+            shutil.copy2(bak, SSHD_CONFIG)
+        except Exception:
+            pass
         raise HTTPException(status_code=400, detail='配置校验失败，已自动回滚：'
                             + ((t['stderr'] or t['stdout']) or '')[:200])
 

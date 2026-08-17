@@ -41,6 +41,8 @@ DEFAULTS = {
     'disk_alert': 90,
     'allow_registration': False,
     'login_ip_whitelist': '',
+    # 只有请求来源本身在此列表中时才解析 X-Forwarded-For，防止直连客户端伪造来源 IP。
+    'trusted_proxies': '',
     'login_notify': 0,
     'hidden_menus': '',
     'security_entrance': '',

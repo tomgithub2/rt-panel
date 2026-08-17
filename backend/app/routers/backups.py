@@ -109,16 +109,20 @@ def restore(body: dict, request: Request, user: dict = Depends(require_perm('bac
         import shutil
         import zipfile
         os.makedirs(target, exist_ok=True)
-        with zipfile.ZipFile(src) as zf:
-            zf.extractall(target)
+        # 复用文件管理的安全解压（防 zip 路径穿越/符号链接）
+        from .files import _extract_zip_safely
+        _extract_zip_safely(src, target)
         audit(user['username'], get_client_ip(request), 'backup_restore',
               f'恢复 {src} → {target}', 'warning')
         return {'ok': True, 'target': target}
     if src.endswith('.sql.gz'):
         from ..utils.exec_utils import run_cmd
+        import re as _re
         db = str(body.get('database', '')).strip()
-        if not db:
-            raise HTTPException(status_code=400, detail='请填写目标数据库名')
+        if not _re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', db):
+            raise HTTPException(status_code=400, detail='目标数据库名无效（仅字母数字下划线，字母开头）')
+        if not os.path.isfile(src):
+            raise HTTPException(status_code=400, detail='备份文件不存在')
         r = run_cmd(f'gunzip -c "{src}" | mysql -uroot {db}', timeout=3600, shell=True)
         if r['code'] != 0:
             raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:300] or '恢复失败')

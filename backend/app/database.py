@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS login_logs (
     success INTEGER NOT NULL,
     reason TEXT DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    jti TEXT PRIMARY KEY,
+    expires_at REAL NOT NULL,
+    revoked_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires ON revoked_tokens(expires_at);
 CREATE TABLE IF NOT EXISTS cron_jobs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,

@@ -20,6 +20,8 @@ from ..rbac import role_permissions
 router = APIRouter(prefix='/api/files', tags=['files'])
 
 SORT_KEYS = {'name': 'name', 'size': 'size', 'mtime': 'mtime'}
+_MAX_ARCHIVE_FILES = 5000
+_MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 
 
 def _norm(path: str) -> str:
@@ -53,6 +55,53 @@ def _default_path() -> str:
         drive = os.environ.get('SystemDrive', 'C:')
         return drive + '\\'
     return '/'
+
+
+def _archive_target(dest: str, member_name: str) -> str:
+    """返回归档成员的安全目标路径，阻止 ../../ 路径穿越。"""
+    root = os.path.realpath(dest)
+    target = os.path.realpath(os.path.join(root, member_name))
+    if os.path.commonpath([root, target]) != root:
+        raise HTTPException(status_code=400, detail='压缩包包含越界路径，已拒绝解压')
+    return target
+
+
+def _extract_zip_safely(path: str, dest: str):
+    with zipfile.ZipFile(path) as zf:
+        members = zf.infolist()
+        total = sum(item.file_size for item in members)
+        if len(members) > _MAX_ARCHIVE_FILES or total > _MAX_ARCHIVE_BYTES:
+            raise HTTPException(status_code=400, detail='压缩包文件数或解压后体积超出限制')
+        for item in members:
+            if stat.S_ISLNK(item.external_attr >> 16):
+                raise HTTPException(status_code=400, detail='压缩包包含符号链接，已拒绝解压')
+            target = _archive_target(dest, item.filename)
+            if item.is_dir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with zf.open(item) as source, open(target, 'wb') as output:
+                shutil.copyfileobj(source, output)
+
+
+def _extract_tar_safely(path: str, dest: str, mode: str):
+    with tarfile.open(path, mode) as tf:
+        members = tf.getmembers()
+        total = sum(item.size for item in members if item.isfile())
+        if len(members) > _MAX_ARCHIVE_FILES or total > _MAX_ARCHIVE_BYTES:
+            raise HTTPException(status_code=400, detail='压缩包文件数或解压后体积超出限制')
+        for item in members:
+            if item.issym() or item.islnk() or not (item.isdir() or item.isfile()):
+                raise HTTPException(status_code=400, detail='压缩包包含不安全成员，已拒绝解压')
+            target = _archive_target(dest, item.name)
+            if item.isdir():
+                os.makedirs(target, exist_ok=True)
+                continue
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            source = tf.extractfile(item)
+            if source is not None:
+                with source, open(target, 'wb') as output:
+                    shutil.copyfileobj(source, output)
 
 
 @router.get('/list')
@@ -218,18 +267,17 @@ def compress(body: dict, user: dict = Depends(require_perm('files:write'))):
 @router.post('/extract')
 def extract(body: dict, user: dict = Depends(require_perm('files:write'))):
     path = _norm(body.get('path', ''))
-    dest = _norm(body.get('dest', '')) or os.path.dirname(path)
+    dest_value = body.get('dest', '')
+    dest = _norm(dest_value) if dest_value else os.path.dirname(path)
     if not os.path.isfile(path):
         raise HTTPException(status_code=400, detail='文件不存在')
     os.makedirs(dest, exist_ok=True)
     lower = path.lower()
     if lower.endswith('.zip'):
-        with zipfile.ZipFile(path) as zf:
-            zf.extractall(dest)
+        _extract_zip_safely(path, dest)
     elif lower.endswith(('.tar.gz', '.tgz', '.tar')):
         mode = 'r:gz' if lower.endswith(('.tar.gz', '.tgz')) else 'r'
-        with tarfile.open(path, mode) as tf:
-            tf.extractall(dest)
+        _extract_tar_safely(path, dest, mode)
     else:
         raise HTTPException(status_code=400, detail='不支持的压缩格式')
     return {'ok': True}

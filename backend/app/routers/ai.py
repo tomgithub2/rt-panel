@@ -614,14 +614,16 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         if not 0 < port < 65536 or protocol not in ('tcp', 'udp'):
             return '参数无效'
         from ..utils.exec_utils import IS_WIN
-        name = str(p.get('name', '')) or f'RTPanel-AI-{port}'
+        name = str(p.get('name', ''))[:64]
+        if not re.match(r'^[A-Za-z0-9 _-]*$', name):
+            name = f'RTPanel-AI-{port}'
         if IS_WIN:
             r = run_cmd(f'powershell -NoProfile -Command "New-NetFirewallRule -DisplayName '
                         f"'{name}' -Direction Inbound -Protocol {protocol.upper()} "
                         f'-LocalPort {port} -Action Allow"', timeout=60, shell=True)
         else:
-            r = run_cmd(f'iptables -I INPUT -p {protocol} --dport {port} -j ACCEPT',
-                        timeout=30, shell=True)
+            r = run_cmd(['iptables', '-I', 'INPUT', '-p', protocol,
+                         '--dport', str(port), '-j', 'ACCEPT'], timeout=30, shell=False)
         return (f'端口 {port}/{protocol} 已放行' if r['code'] == 0
                 else '放行失败: ' + r['stderr'][:200])
     if tool == 'block_ip':
@@ -634,7 +636,8 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
                     f"'RTPanel-AI-Block-{ip}' -Direction Inbound -RemoteAddress {ip} "
                     f'-Action Block"', timeout=60, shell=True)
         else:
-            run_cmd(f'iptables -I INPUT -s {ip} -j DROP', timeout=30, shell=True)
+            run_cmd(['iptables', '-I', 'INPUT', '-s', ip, '-j', 'DROP'],
+                    timeout=30, shell=False)
         return f'IP {ip} 已封禁'
     if tool == 'create_cron':
         from ..scheduler import next_runs
@@ -692,7 +695,9 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         a = str(p.get('action', '')).strip()
         if a not in ('start', 'stop', 'restart', 'remove'):
             return '操作无效'
-        r = run_cmd(f'docker {a} {c}', timeout=120, shell=True)
+        from .docker import _docker_id
+        c = _docker_id(c, '容器标识')
+        r = run_cmd(['docker', a, c], timeout=120, shell=False)
         return (f'容器 {c} {a} 完成' if r['code'] == 0 else '操作失败: ' + r['stderr'][:200])
     if tool == 'list_services':
         from .routers.services import service_list

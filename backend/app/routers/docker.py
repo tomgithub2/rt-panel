@@ -1,6 +1,7 @@
 # Created by 小杜 on 2026/08
 
 """Docker 管理：容器/镜像/网络/卷，全部走 docker CLI。"""
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..audit import audit
@@ -10,6 +11,23 @@ from ..utils.exec_utils import run_cmd
 
 router = APIRouter(prefix='/api/docker', tags=['docker'],
                    dependencies=[Depends(require_feature('docker'))])
+
+_DOCKER_ID_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$')
+_DOCKER_IMAGE_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_./:@-]{0,255}$')
+
+
+def _docker_id(value, label='容器标识'):
+    value = str(value or '').strip()
+    if not _DOCKER_ID_RE.fullmatch(value):
+        raise HTTPException(status_code=400, detail=f'{label}格式无效')
+    return value
+
+
+def _docker_image(value):
+    value = str(value or '').strip()
+    if not _DOCKER_IMAGE_RE.fullmatch(value):
+        raise HTTPException(status_code=400, detail='镜像名格式无效')
+    return value
 
 
 def _check():
@@ -58,11 +76,13 @@ def containers(user: dict = Depends(require_perm('docker:view'))):
 def container_action(cid: str, body: dict, request: Request,
                      user: dict = Depends(require_perm('docker:manage'))):
     _check()
+    cid = _docker_id(cid)
     action = body.get('action')
     if action not in ('start', 'stop', 'restart', 'remove', 'kill', 'pause', 'unpause'):
         raise HTTPException(status_code=400, detail='未知操作')
-    force = ' -f' if action == 'remove' and body.get('force') else ''
-    r = run_cmd(f'docker {action} {force} {cid}', timeout=120, shell=True)
+    force = action == 'remove' and body.get('force')
+    args = ['docker', action] + (['-f'] if force else []) + [cid]
+    r = run_cmd(args, timeout=120, shell=False)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:300] or '操作失败')
     audit(user['username'], get_client_ip(request), 'docker_action',
@@ -74,30 +94,35 @@ def container_action(cid: str, body: dict, request: Request,
 def container_create(body: dict, request: Request,
                      user: dict = Depends(require_perm('docker:manage'))):
     _check()
-    image = str(body.get('image', '')).strip()
+    image = _docker_image(body.get('image', ''))
     name = str(body.get('name', '')).strip()
-    if not image:
-        raise HTTPException(status_code=400, detail='镜像不能为空')
-    cmd = f'docker run -d --restart {body.get("restart", "unless-stopped")}'
+    restart = str(body.get('restart', 'unless-stopped'))
+    if restart not in ('no', 'always', 'unless-stopped', 'on-failure'):
+        raise HTTPException(status_code=400, detail='重启策略无效')
+    cmd = ['docker', 'run', '-d', '--restart', restart]
     if name:
-        cmd += f' --name {name}'
+        cmd += ['--name', _docker_id(name, '容器名称')]
     for p in body.get('ports', []):
         if isinstance(p, str) and ':' in p:
-            cmd += f' -p {p}'
+            cmd += ['-p', p]
         elif isinstance(p, dict) and p.get('host') and p.get('container'):
-            cmd += f' -p {p["host"]}:{p["container"]}'
+            cmd += ['-p', f'{p["host"]}:{p["container"]}']
     for e in body.get('env', []):
         if isinstance(e, str) and '=' in e:
-            cmd += f' -e {e}'
+            cmd += ['-e', e]
     for v in body.get('volumes', []):
         if isinstance(v, str) and ':' in v:
-            cmd += f' -v {v}'
+            cmd += ['-v', v]
     if body.get('network'):
-        cmd += f' --network {body["network"]}'
-    cmd += f' {image}'
+        cmd += ['--network', str(body['network'])]
+    cmd.append(image)
     if body.get('command'):
-        cmd += f' {body["command"]}'
-    r = run_cmd(cmd, timeout=600, shell=True)
+        import shlex
+        try:
+            cmd += shlex.split(str(body['command']))
+        except ValueError:
+            raise HTTPException(status_code=400, detail='容器命令格式无效')
+    r = run_cmd(cmd, timeout=600, shell=False)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:300] or '创建失败')
     audit(user['username'], get_client_ip(request), 'docker_create',
@@ -109,14 +134,16 @@ def container_create(body: dict, request: Request,
 def container_logs(cid: str, lines: int = 200,
                    user: dict = Depends(require_perm('docker:view'))):
     _check()
-    r = run_cmd(f'docker logs --tail {min(lines, 2000)} {cid} 2>&1', timeout=30, shell=True)
+    cid = _docker_id(cid)
+    r = run_cmd(['docker', 'logs', '--tail', str(min(lines, 2000)), cid], timeout=30, shell=False)
     return {'logs': r['stdout'] + r['stderr']}
 
 
 @router.get('/containers/{cid}/stats')
 def container_stats(cid: str, user: dict = Depends(require_perm('docker:view'))):
     _check()
-    r = run_cmd(f'docker stats --no-stream --format "{{json .}}" {cid}', timeout=30)
+    cid = _docker_id(cid)
+    r = run_cmd(['docker', 'stats', '--no-stream', '--format', '{{json .}}', cid], timeout=30, shell=False)
     import json
     try:
         return json.loads(r['stdout'].strip())
@@ -141,12 +168,10 @@ def images(user: dict = Depends(require_perm('docker:view'))):
 @router.post('/images/pull')
 def image_pull(body: dict, request: Request, user: dict = Depends(require_perm('docker:manage'))):
     _check()
-    image = str(body.get('image', '')).strip()
-    if not image:
-        raise HTTPException(status_code=400, detail='镜像名不能为空')
+    image = _docker_image(body.get('image', ''))
     import threading
-    t = threading.Thread(target=run_cmd, args=(f'docker pull {image}',),
-                         kwargs={'timeout': 3600, 'shell': True}, daemon=True)
+    t = threading.Thread(target=run_cmd, args=(['docker', 'pull', image],),
+                         kwargs={'timeout': 3600, 'shell': False}, daemon=True)
     t.start()
     audit(user['username'], get_client_ip(request), 'docker_pull', f'拉取镜像 {image}')
     return {'ok': True, 'msg': '拉取任务已启动'}
@@ -156,7 +181,8 @@ def image_pull(body: dict, request: Request, user: dict = Depends(require_perm('
 def image_remove(image_id: str, request: Request,
                  user: dict = Depends(require_perm('docker:manage'))):
     _check()
-    r = run_cmd(f'docker rmi {image_id}', timeout=300, shell=True)
+    image_id = _docker_id(image_id, '镜像标识')
+    r = run_cmd(['docker', 'rmi', image_id], timeout=300, shell=False)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:300] or '删除失败')
     audit(user['username'], get_client_ip(request), 'docker_rmi', f'删除镜像 {image_id}', 'warning')

@@ -6,7 +6,7 @@
 3. 可选：立即绑定官网账户（rt888.icu），核心功能免费、VIP 专属功能需兑换码升级。
 
 安全设计：
-- 令牌随机 16 位 hex，由安装器生成写入 data/setup_token.txt 并打印；
+- 令牌使用高强度随机值，由安装器生成写入 data/setup_token.txt 并打印；
   面板启动时若缺失会自动补生成（打印到控制台日志）。
 - 初始化接口按 IP 限流：5 次失败锁定 10 分钟。
 - 初始化完成后令牌文件立即销毁，接口返回 409。
@@ -20,7 +20,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 
 from ..audit import audit
-from ..auth import hash_password
+from ..auth import hash_password, password_policy_error
 from ..binding import bind as binding_bind
 from ..binding import server_url
 from ..config import DATA_DIR
@@ -52,7 +52,7 @@ def setup_token() -> str:
             return tok
     except OSError:
         pass
-    tok = secrets.token_hex(8)
+    tok = secrets.token_hex(32)
     try:
         with open(TOKEN_FILE, 'w', encoding='utf-8') as f:
             f.write(tok)
@@ -110,7 +110,7 @@ def do_init(body: dict, request: Request):
         raise HTTPException(status_code=429, detail='尝试次数过多，请 10 分钟后再试')
 
     token = str(body.get('token', '')).strip()
-    if not token or token != setup_token():
+    if not token or not secrets.compare_digest(token, setup_token()):
         _fail(ip)
         raise HTTPException(status_code=400, detail='初始化令牌错误')
 
@@ -118,8 +118,9 @@ def do_init(body: dict, request: Request):
     password = str(body.get('password', ''))
     if not re.match(r'^[a-zA-Z][a-zA-Z0-9_]{2,31}$', username):
         raise HTTPException(status_code=400, detail='用户名需以字母开头，3-32 位字母、数字、下划线')
-    if len(password) < 8 or not re.search(r'[a-zA-Z]', password) or not re.search(r'[0-9]', password):
-        raise HTTPException(status_code=400, detail='密码至少 8 位，且必须同时包含字母和数字')
+    policy_error = password_policy_error(password)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
 
     pw_hash = hash_password(password)
     try:

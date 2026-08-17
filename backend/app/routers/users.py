@@ -4,7 +4,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..audit import audit
-from ..auth import get_client_ip, hash_password, require_perm
+from ..auth import get_client_ip, hash_password, password_policy_error, require_perm
 from ..database import execute, now, query
 from ..rbac import ROLES
 
@@ -31,8 +31,9 @@ def user_add(body: dict, request: Request, user: dict = Depends(require_perm('us
     username = str(body.get('username', '')).strip()
     password = str(body.get('password', ''))
     role = str(body.get('role', 'operator'))
-    if not username or len(password) < 8:
-        raise HTTPException(status_code=400, detail='用户名不能为空且密码至少 8 位')
+    policy_error = password_policy_error(password)
+    if not username or policy_error:
+        raise HTTPException(status_code=400, detail='用户名不能为空；' + policy_error)
     if not username.replace('_', '').replace('-', '').isalnum():
         raise HTTPException(status_code=400, detail='用户名仅限字母数字下划线')
     if role not in ROLES:
@@ -78,8 +79,9 @@ def user_update(uid: int, body: dict, request: Request,
 def user_password(uid: int, body: dict, request: Request,
                   user: dict = Depends(require_perm('users:manage'))):
     password = str(body.get('password', ''))
-    if len(password) < 8:
-        raise HTTPException(status_code=400, detail='密码至少 8 位')
+    policy_error = password_policy_error(password)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
     execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), uid))
     audit(user['username'], get_client_ip(request), 'user_password',
           f'重置用户 #{uid} 的密码', 'warning')

@@ -2,6 +2,7 @@
 
 """数据库管理：检测 MySQL/PostgreSQL/SQLite，建库建用户、查询、备份。"""
 import os
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
@@ -12,6 +13,24 @@ from ..utils.exec_utils import run_cmd
 
 router = APIRouter(prefix='/api/databases', tags=['databases'],
                    dependencies=[Depends(require_feature('databases'))])
+
+_IDENT_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_]{0,63}$')
+
+
+def _identifier(value: object, label: str) -> str:
+    value = str(value or '').strip()
+    if not _IDENT_RE.fullmatch(value):
+        raise HTTPException(status_code=400, detail=f'{label}无效（仅字母、数字、下划线，且以字母开头）')
+    return value
+
+
+def _database_kind(value: object, allow_redis: bool = False) -> str:
+    allowed = {'mysql', 'postgresql', 'sqlite'}
+    if allow_redis:
+        allowed.add('redis')
+    if value not in allowed:
+        raise HTTPException(status_code=404, detail='未知数据库类型')
+    return str(value)
 
 
 def _mysql_cmd(args: str, root_pwd: str = '') -> str:
@@ -118,9 +137,8 @@ def db_list(kind: str, user: dict = Depends(require_perm('databases:view'))):
 @router.post('/{kind}/database')
 def db_create(kind: str, body: dict, request: Request,
               user: dict = Depends(require_perm('databases:manage'))):
-    name = str(body.get('name', '')).strip()
-    if not name or not name.replace('_', '').isalnum():
-        raise HTTPException(status_code=400, detail='数据库名无效（仅字母数字下划线）')
+    kind = _database_kind(kind)
+    name = _identifier(body.get('name', ''), '数据库名')
     if kind == 'mysql':
         charset = body.get('charset', 'utf8mb4')
         r = run_cmd(_mysql_cmd(
@@ -144,9 +162,8 @@ def db_create(kind: str, body: dict, request: Request,
 @router.delete('/{kind}/database')
 def db_drop(kind: str, body: dict, request: Request,
             user: dict = Depends(require_perm('databases:manage'))):
-    name = str(body.get('name', ''))
-    if not name:
-        raise HTTPException(status_code=400, detail='数据库名不能为空')
+    kind = _database_kind(kind)
+    name = _identifier(body.get('name', ''), '数据库名')
     if kind == 'mysql':
         r = run_cmd(_mysql_cmd(f'-e "DROP DATABASE `{name}`;"'), timeout=30)
     elif kind == 'postgresql':
@@ -168,6 +185,8 @@ def db_drop(kind: str, body: dict, request: Request,
 
 @router.get('/{kind}/{db}/tables')
 def db_tables(kind: str, db: str, user: dict = Depends(require_perm('databases:view'))):
+    kind = _database_kind(kind)
+    db = _identifier(db, '数据库名')
     if kind == 'mysql':
         r = run_cmd(_mysql_cmd(f'-N -e "SHOW TABLE STATUS FROM `{db}`;"'), timeout=30)
         out = []
@@ -200,6 +219,9 @@ def db_tables(kind: str, db: str, user: dict = Depends(require_perm('databases:v
 def db_schema(kind: str, db: str, table: str,
               user: dict = Depends(require_perm('databases:view'))):
     """表结构（列名/类型/主键）。"""
+    kind = _database_kind(kind)
+    db = _identifier(db, '数据库名')
+    table = _identifier(table, '数据表名')
     if kind == 'sqlite':
         import sqlite3
         from ..config import DATA_DIR
@@ -235,6 +257,9 @@ def db_schema(kind: str, db: str, table: str,
 def db_rows(kind: str, db: str, table: str, limit: int = 100,
             user: dict = Depends(require_perm('databases:view'))):
     """浏览表数据（SELECT * LIMIT）。"""
+    kind = _database_kind(kind)
+    db = _identifier(db, '数据库名')
+    table = _identifier(table, '数据表名')
     limit = min(max(limit, 1), 500)
     if kind == 'sqlite':
         import sqlite3
@@ -274,8 +299,8 @@ def db_rows(kind: str, db: str, table: str, limit: int = 100,
 
 @router.post('/query')
 def db_query(body: dict, request: Request, user: dict = Depends(require_perm('databases:manage'))):
-    kind = str(body.get('kind', ''))
-    db = str(body.get('db', ''))
+    kind = _database_kind(body.get('kind', ''))
+    db = _identifier(body.get('db', ''), '数据库名')
     sql = str(body.get('sql', '')).strip()
     if not sql:
         raise HTTPException(status_code=400, detail='SQL 不能为空')
@@ -303,11 +328,11 @@ def db_query(body: dict, request: Request, user: dict = Depends(require_perm('da
         finally:
             conn.close()
     if kind == 'mysql':
-        r = run_cmd(_mysql_cmd(f'--batch --raw -e "{sql.replace(chr(34), chr(92) + chr(34))}" {db}'),
-                    timeout=120, shell=True)
+        r = run_cmd(['mysql', '--connect-timeout=10', '-uroot', '--batch', '--raw', '-e', sql, db],
+                    timeout=120, shell=False)
         return _parse_cli_result(r)
     if kind == 'postgresql':
-        r = run_cmd(_psql_cmd(f'-d {db} -c "{sql}"'), timeout=120, shell=True)
+        r = run_cmd(['psql', '-U', 'postgres', '-d', db, '-c', sql], timeout=120, shell=False)
         return _parse_cli_result(r)
     raise HTTPException(status_code=404, detail='未知数据库类型')
 
@@ -329,6 +354,8 @@ def _parse_cli_result(r: dict):
 @router.get('/{kind}/{db}/backup')
 def db_backup(kind: str, db: str, request: Request,
               user: dict = Depends(require_perm('databases:manage'))):
+    kind = _database_kind(kind)
+    db = _identifier(db, '数据库名')
     import datetime
     stamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
     dest_dir = os.path.join(BACKUP_DIR, 'database')
@@ -341,6 +368,11 @@ def db_backup(kind: str, db: str, request: Request,
 
 def dump_database(kind: str, db: str, dest_dir: str, base_name: str) -> dict:
     """供备份任务与手动备份共用。"""
+    try:
+        kind = _database_kind(kind)
+        db = _identifier(db, '数据库名')
+    except HTTPException as exc:
+        return {'ok': False, 'error': exc.detail}
     os.makedirs(dest_dir, exist_ok=True)
     if kind == 'mysql':
         path = os.path.join(dest_dir, base_name + '.sql.gz')

@@ -80,14 +80,14 @@ def main():
         for rel in files:
             zf.write(os.path.join(BASE, rel.replace('/', os.sep)), rel)
 
-    # 签名清单
+    # 签名清单（签名只覆盖文件哈希表：版本号/公告由官网后台可编辑，防篡改核心是文件内容）
     manifest = {
         'product': 'RT面板',
         'version': VERSION,
         'generated_at': int(time.time()),
         'files': files,
     }
-    sig = key.sign(canonical(manifest), padding.PKCS1v15(), hashes.SHA256())
+    sig = key.sign(canonical({'files': files}), padding.PKCS1v15(), hashes.SHA256())
     manifest['signature'] = base64.b64encode(sig).decode()
 
     # latest.json

@@ -1,15 +1,25 @@
 # Created by 小杜 on 2026/08
 
 """网络工具：网卡、路由、ping、traceroute、DNS、端口探测。"""
+import re
 import socket
 
 import psutil
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..auth import require_perm
-from ..utils.exec_utils import IS_WIN, run_cmd
+from ..utils.exec_utils import IS_WIN, run_cmd, which
 
 router = APIRouter(prefix='/api/network', tags=['network'])
+
+_HOST_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9.:-]{0,252}$')
+
+
+def _safe_host(value: object) -> str:
+    host = str(value or '').strip()
+    if not _HOST_RE.fullmatch(host):
+        raise HTTPException(status_code=400, detail='主机名或 IP 格式无效')
+    return host
 
 
 @router.get('/interfaces')
@@ -53,28 +63,27 @@ def arp(user: dict = Depends(require_perm('network:view'))):
 
 @router.post('/ping')
 def ping(body: dict, user: dict = Depends(require_perm('network:tools'))):
-    host = str(body.get('host', '')).strip()
+    host = _safe_host(body.get('host', ''))
     count = int(body.get('count', 4))
-    if not host or count > 20:
+    if not 1 <= count <= 20:
         raise HTTPException(status_code=400, detail='参数无效')
     if IS_WIN:
-        cmd = f'ping -n {count} -w 2000 {host}'
+        cmd = ['ping', '-n', str(count), '-w', '2000', host]
     else:
-        cmd = f'ping -c {count} -W 2 {host}'
-    r = run_cmd(cmd, timeout=count * 5 + 10, shell=True)
+        cmd = ['ping', '-c', str(count), '-W', '2', host]
+    r = run_cmd(cmd, timeout=count * 5 + 10, shell=False)
     return {'code': r['code'], 'output': r['stdout'] + r['stderr']}
 
 
 @router.post('/traceroute')
 def traceroute(body: dict, user: dict = Depends(require_perm('network:tools'))):
-    host = str(body.get('host', '')).strip()
-    if not host:
-        raise HTTPException(status_code=400, detail='主机不能为空')
+    host = _safe_host(body.get('host', ''))
     if IS_WIN:
-        cmd = f'tracert -d -h 15 -w 1500 {host}'
+        cmd = ['tracert', '-d', '-h', '15', '-w', '1500', host]
     else:
-        cmd = f'traceroute -n -m 15 -w 2 {host} 2>/dev/null || tracepath {host}'
-    r = run_cmd(cmd, timeout=60, shell=True)
+        cmd = (['traceroute', '-n', '-m', '15', '-w', '2', host]
+               if which('traceroute') else ['tracepath', host])
+    r = run_cmd(cmd, timeout=60, shell=False)
     return {'code': r['code'], 'output': r['stdout'] + r['stderr']}
 
 

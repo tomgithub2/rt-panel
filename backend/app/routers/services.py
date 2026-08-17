@@ -12,6 +12,15 @@ from ..utils.exec_utils import IS_WIN, run_cmd
 
 router = APIRouter(prefix='/api/services', tags=['services'])
 
+_SERVICE_NAME_RE = re.compile(r'^[A-Za-z0-9_.@-]{1,128}$')
+
+
+def _service_name(value: object) -> str:
+    name = str(value or '').strip()
+    if not _SERVICE_NAME_RE.fullmatch(name):
+        raise HTTPException(status_code=400, detail='服务名称格式无效')
+    return name
+
 
 @router.get('/list')
 def service_list(user: dict = Depends(require_perm('services:view'))):
@@ -71,14 +80,14 @@ def _linux_list():
 
 
 def _unit_enabled(name: str) -> str:
-    r = run_cmd(f'systemctl is-enabled {name} 2>/dev/null', timeout=10, shell=True)
+    r = run_cmd(['systemctl', 'is-enabled', name], timeout=10, shell=False)
     return r['stdout'].strip() if r['code'] == 0 else 'disabled'
 
 
 @router.post('/action')
 def service_action(body: dict, request: Request,
                    user: dict = Depends(require_perm('services:manage'))):
-    name = str(body.get('name', ''))
+    name = _service_name(body.get('name', ''))
     action = str(body.get('action', ''))
     if not name or action not in ('start', 'stop', 'restart', 'reload', 'enable', 'disable'):
         raise HTTPException(status_code=400, detail='参数无效')
@@ -95,8 +104,8 @@ def service_action(body: dict, request: Request,
                    ('Automatic' if action == 'enable' else 'Disabled')
         cmd += '"'
     else:
-        cmd = f'systemctl {action} {name}'
-    r = run_cmd(cmd, timeout=120, shell=True)
+        cmd = ['systemctl', action, name]
+    r = run_cmd(cmd, timeout=120, shell=IS_WIN)
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or r['stdout'])[:300] or '执行失败')
     audit(user['username'], get_client_ip(request), 'service_action',
@@ -106,10 +115,11 @@ def service_action(body: dict, request: Request,
 
 @router.get('/status/{name}')
 def service_status(name: str, user: dict = Depends(require_perm('services:view'))):
+    name = _service_name(name)
     if IS_WIN:
         r = run_cmd(f'powershell -NoProfile -Command "Get-Service -Name \'{name}\' | '
                     'Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json"',
                     timeout=30, shell=True)
         return {'raw': r['stdout'] if r['code'] == 0 else r['stderr']}
-    r = run_cmd(f'systemctl status {name} --no-pager 2>&1 | head -n 40', timeout=30, shell=True)
-    return {'raw': r['stdout']}
+    r = run_cmd(['systemctl', 'status', name, '--no-pager'], timeout=30, shell=False)
+    return {'raw': (r['stdout'] + r['stderr'])[:8000]}

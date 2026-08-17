@@ -175,7 +175,12 @@ def renew_cert(sid: int) -> dict:
     if not cert:
         return {'ok': False, 'error': '证书不存在'}
     if cert['type'] == 'letsencrypt':
-        r = run_cmd(f'certbot renew --cert-name {cert["domain"]} --quiet', timeout=600, shell=True)
+        domain = str(cert.get('domain') or '').strip()
+        if not re.match(r'^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$',
+                        domain):
+            return {'ok': False, 'error': '证书域名无效'}
+        r = run_cmd(['certbot', 'renew', '--cert-name', domain, '--quiet'],
+                    timeout=600, shell=False)
         if r['code'] == 0 and cert['cert_path'] and os.path.isfile(cert['cert_path']):
             meta = _cert_meta(cert['cert_path'])
             execute('UPDATE ssl_certs SET expires=? WHERE id=?', (meta.get('expires'), sid))

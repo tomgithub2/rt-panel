@@ -100,6 +100,7 @@ def swap_create(body: dict, request: Request, user: dict = Depends(require_perm(
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '创建失败')[:300])
     swappiness = int(body.get('swappiness', 10))
+    swappiness = max(0, min(swappiness, 100))  # 只允许 0-100
     run_cmd(f'sysctl vm.swappiness={swappiness}', timeout=10, shell=True)
     audit(user['username'], get_client_ip(request), 'swap_create',
           f'创建 Swap {size_mb}MB (swappiness={swappiness})', 'warning')
