@@ -27,6 +27,8 @@ export default {
       appsDialog: { show: false, app: 'wordpress', domain: '', port: 80, with_db: true, with_ftp: false, busy: false },
       appsList: [],
       backupsDialog: { show: false, list: [] },
+      statsDialog: { show: false, data: null, domain: '', loading: false },
+      importDialog: { show: false, domain: '', port: 80, file: null, busy: false },
     }
   },
   watch: {
@@ -115,17 +117,30 @@ export default {
           redirect: s.redirect || '', auth_user: s.auth_user || '',
           auth_pass: '', hotlink: s.hotlink || '',
           presets: r.pseudo_presets || [],
+          domainsList: (s.domains || '').split(/[\s,]+/).filter(Boolean),
+          newDomain: '',
         }
       } catch (e) {}
     },
     async saveSettings() {
       const f = this.setForm
       if (f.auth_user && !f.auth_pass) return ElMessage.warning('设置了用户名则必须填写目录密码')
+      f.domains = (f.domainsList || []).join(' ')
       try {
         await api.put(`/websites/${f.sid}/settings`, f)
         ElMessage.success('高级设置已保存并重载配置')
         f.show = false
       } catch (e) {}
+    },
+    addDomain() {
+      const d = (this.setForm.newDomain || '').trim().toLowerCase()
+      if (!d) return ElMessage.warning('请输入要绑定的域名')
+      if (!/^[a-z0-9.-]+$/.test(d)) return ElMessage.warning('域名格式不正确')
+      if (!this.setForm.domainsList.includes(d)) this.setForm.domainsList.push(d)
+      this.setForm.newDomain = ''
+    },
+    removeDomain(d) {
+      this.setForm.domainsList = this.setForm.domainsList.filter(x => x !== d)
     },
     typeLabel(t) { return t === 'proxy' ? '反向代理' : (t === 'php' ? 'PHP 站点' : '静态站点') },
     openSite(row) {
@@ -181,6 +196,42 @@ export default {
         a.click()
         URL.revokeObjectURL(url)
       } catch (e) {}
+    },
+    async openStats(row) {
+      this.statsDialog = { show: true, data: null, domain: row.domain, loading: true }
+      try {
+        const r = await api.get(`/websites/${row.id}/stats`)
+        this.statsDialog.data = r
+      } catch (e) {} finally { this.statsDialog.loading = false }
+    },
+    async copyDomain(row) {
+      try {
+        await navigator.clipboard.writeText(row.domain)
+        ElMessage.success(`已复制 ${row.domain}`)
+      } catch (e) { ElMessage.info('复制失败，请手动复制') }
+    },
+    openFiles(row) {
+      this.$router.push({ path: '/files', query: { path: row.root } })
+    },
+    openImport() {
+      this.importDialog = { show: true, domain: '', port: 80, file: null, busy: false }
+    },
+    onImportFile(e) { this.importDialog.file = e.target.files[0] || null },
+    async doImport() {
+      const d = this.importDialog
+      if (!d.domain) return ElMessage.warning('请输入域名')
+      if (!d.file) return ElMessage.warning('请选择要导入的 zip 备份包')
+      d.busy = true
+      try {
+        const fd = new FormData()
+        fd.append('zipfile', d.file)
+        fd.append('domain', d.domain)
+        fd.append('port', String(Number(d.port) || 80))
+        const r = await api.post('/websites/import', fd)
+        ElMessage.success(r.msg || '导入完成')
+        d.show = false
+        this.load()
+      } catch (e) {} finally { d.busy = false }
     },
   },
   render: (function(){ const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, normalizeClass: _normalizeClass } = Vue
@@ -288,6 +339,15 @@ return function render(_ctx, _cache) {
             ]),
             _: 1 /* STABLE */
           }, 8 /* PROPS */, ["onClick"]),
+          _createVNode(_component_el_button, {
+            size: "small", type: "warning", plain: "",
+            onClick: _ctx.openImport
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode("一键导入", -1 /* CACHED */)
+            ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["onClick"]),
           (_ctx.hasPerm('websites:manage'))
             ? (_openBlock(), _createBlock(_component_el_button, {
                 key: 0,
@@ -381,7 +441,7 @@ return function render(_ctx, _cache) {
             }),
             _createVNode(_component_el_table_column, {
               label: "操作",
-              width: "400",
+              width: "560",
               fixed: "right"
             }, {
               default: _withCtx((s) => [
@@ -391,6 +451,33 @@ return function render(_ctx, _cache) {
                 }, {
                   default: _withCtx(() => [...(_cache[67] || (_cache[67] = [
                     _createTextVNode("打开网站", -1 /* CACHED */)
+                  ]))]),
+                  _: 1 /* STABLE */
+                }, 8 /* PROPS */, ["onClick"]),
+                _createVNode(_component_el_button, {
+                  size: "small", type: "primary", plain: "",
+                  onClick: $event => (_ctx.openStats(s.row))
+                }, {
+                  default: _withCtx(() => [...(_cache[77] || (_cache[77] = [
+                    _createTextVNode("统计", -1 /* CACHED */)
+                  ]))]),
+                  _: 1 /* STABLE */
+                }, 8 /* PROPS */, ["onClick"]),
+                _createVNode(_component_el_button, {
+                  size: "small",
+                  onClick: $event => (_ctx.copyDomain(s.row))
+                }, {
+                  default: _withCtx(() => [...(_cache[78] || (_cache[78] = [
+                    _createTextVNode("复制域名", -1 /* CACHED */)
+                  ]))]),
+                  _: 1 /* STABLE */
+                }, 8 /* PROPS */, ["onClick"]),
+                _createVNode(_component_el_button, {
+                  size: "small",
+                  onClick: $event => (_ctx.openFiles(s.row))
+                }, {
+                  default: _withCtx(() => [...(_cache[79] || (_cache[79] = [
+                    _createTextVNode("文件", -1 /* CACHED */)
                   ]))]),
                   _: 1 /* STABLE */
                 }, 8 /* PROPS */, ["onClick"]),
@@ -569,6 +656,134 @@ return function render(_ctx, _cache) {
                 _createVNode(_component_el_button, { size: "small", onClick: $event => (_ctx.downloadBackup(s.row)) }, { default: _withCtx(() => [ _createTextVNode("下载", -1 /* CACHED */) ]), _: 1 /* STABLE */ }, 8 /* PROPS */, ["onClick"]),
                 _createVNode(_component_el_button, { size: "small", type: "danger", onClick: $event => (_ctx.delBackup(s.row)) }, { default: _withCtx(() => [ _createTextVNode("删除", -1 /* CACHED */) ]), _: 1 /* STABLE */ }, 8 /* PROPS */, ["onClick"])
               ])
+            })
+          ]),
+          _: 1 /* STABLE */
+        })
+      ])
+    }),
+    _createCommentVNode(" 流量统计对话框 "),
+    _createVNode(_component_el_dialog, {
+      modelValue: _ctx.statsDialog.show,
+      "onUpdate:modelValue": _cache[80] || (_cache[80] = $event => ((_ctx.statsDialog.show) = $event)),
+      title: "流量统计 · " + _ctx.statsDialog.domain,
+      width: "640px"
+    }, {
+      default: _withCtx(() => [
+        _ctx.statsDialog.loading
+          ? (_openBlock(), _createElementBlock("div", { key: 0, style: {"text-align":"center","padding":"30px 0","color":"var(--text-secondary)"} }, "统计中…"))
+          : _createCommentVNode("v-if", true),
+        (_ctx.statsDialog.data)
+          ? (_openBlock(), _createElementBlock("div", { key: 1 }, [
+              _createElementVNode("div", { style: {"display":"flex","gap":"12px","margin-bottom":"14px"} }, [
+                _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
+                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#d4af37"} }, _toDisplayString(_ctx.statsDialog.data.today.pv), 1 /* TEXT */),
+                  _createElementVNode("div", { style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"4px"} }, "今日访问量 PV", -1 /* CACHED */)
+                ]),
+                _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
+                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#409eff"} }, _toDisplayString(_ctx.statsDialog.data.today.uv), 1 /* TEXT */),
+                  _createElementVNode("div", { style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"4px"} }, "今日独立访客 UV", -1 /* CACHED */)
+                ]),
+                _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
+                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#67c23a"} }, _toDisplayString(_ctx.statsDialog.data.today.bytes > 0 ? (_ctx.statsDialog.data.today.bytes / 1048576).toFixed(2) + ' MB' : '0'), 1 /* TEXT */),
+                  _createElementVNode("div", { style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"4px"} }, "今日流量", -1 /* CACHED */)
+                ])
+              ]),
+              _createElementVNode("div", { style: {"font-weight":"600","margin":"10px 0 6px"} }, "近 7 天访问趋势", -1 /* CACHED */),
+              _createVNode(_component_el_table, { data: _ctx.statsDialog.data.days, size: "small" }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_el_table_column, { prop: "date", label: "日期", width: "120" }),
+                  _createVNode(_component_el_table_column, { label: "访问量" }, {
+                    default: _withCtx((s) => [
+                      _createElementVNode("div", { style: {"display":"flex","align-items":"center","gap":"8px"} }, [
+                        _createElementVNode("div", { style: {"width":"60px","height":"8px","background":"linear-gradient(90deg,#d4af37,#9a7a22)","border-radius":"4px"} }),
+                        _createTextVNode(_toDisplayString(s.row.pv), 1 /* TEXT */)
+                      ])
+                    ])
+                  })
+                ]),
+                _: 1 /* STABLE */
+              }),
+              (_ctx.statsDialog.data.top.length)
+                ? (_openBlock(), _createElementBlock("div", { key: 0 }, [
+                    _createElementVNode("div", { style: {"font-weight":"600","margin":"10px 0 6px"} }, "今日 TOP 访问", -1 /* CACHED */),
+                    _createVNode(_component_el_table, { data: _ctx.statsDialog.data.top, size: "small" }, {
+                      default: _withCtx(() => [
+                        _createVNode(_component_el_table_column, { prop: "uri", label: "请求" }),
+                        _createVNode(_component_el_table_column, { prop: "count", label: "次数", width: "90" })
+                      ]),
+                      _: 1 /* STABLE */
+                    })
+                  ]))
+                : _createCommentVNode("v-if", true),
+              (!_ctx.statsDialog.data.available)
+                ? (_openBlock(), _createElementBlock("div", { key: 1, style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"10px"} }, "暂无站点日志（站点独立日志在 Nginx 重载后开始记录）。", -1 /* CACHED */))
+                : _createCommentVNode("v-if", true)
+            ]))
+          : _createCommentVNode("v-if", true)
+      ])
+    }),
+    _createCommentVNode(" 一键导入对话框 "),
+    _createVNode(_component_el_dialog, {
+      modelValue: _ctx.importDialog.show,
+      "onUpdate:modelValue": _cache[81] || (_cache[81] = $event => ((_ctx.importDialog.show) = $event)),
+      title: "一键导入网站（搬家）",
+      width: "520px",
+      "close-on-click-modal": false
+    }, {
+      footer: _withCtx(() => [
+        _createElementVNode("div", _hoisted_17, [
+          _createVNode(_component_el_button, {
+            onClick: _cache[82] || (_cache[82] = $event => (_ctx.importDialog.show = false))
+          }, {
+            default: _withCtx(() => [ _createTextVNode("取消", -1 /* CACHED */) ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["onClick"]),
+          _createVNode(_component_el_button, {
+            type: "primary",
+            disabled: _ctx.importDialog.busy,
+            onClick: _ctx.doImport
+          }, {
+            default: _withCtx(() => [
+              _createTextVNode(_toDisplayString(_ctx.importDialog.busy ? '导入中…' : '开始导入'), 1 /* TEXT */)
+            ]),
+            _: 1 /* STABLE */
+          }, 8 /* PROPS */, ["disabled", "onClick"])
+        ])
+      ]),
+      default: _withCtx(() => [
+        _createElementVNode("div", { style: {"margin-bottom":"12px","color":"var(--text-secondary)","font-size":"12px"} },
+          "上传本站或其他服务器的网站 zip 备份（本面板「备份中心」导出的即可），自动解压建站，搬家不用再手动传文件。", -1 /* CACHED */),
+        _createVNode(_component_el_form, { "label-width": "90px" }, {
+          default: _withCtx(() => [
+            _createVNode(_component_el_form_item, { label: "zip 备份" }, {
+              default: _withCtx(() => [
+                _createElementVNode("input", {
+                  type: "file", accept: ".zip",
+                  onChange: _cache[83] || (_cache[83] = $event => (_ctx.onImportFile($event)))
+                })
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "域名" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_input, {
+                  modelValue: _ctx.importDialog.domain,
+                  "onUpdate:modelValue": _cache[84] || (_cache[84] = $event => ((_ctx.importDialog.domain) = $event)),
+                  placeholder: "新域名，如 example.com"
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "端口" }, {
+              default: _withCtx(() => [
+                _createVNode(_component_el_input, {
+                  modelValue: _ctx.importDialog.port,
+                  "onUpdate:modelValue": _cache[85] || (_cache[85] = $event => ((_ctx.importDialog.port) = $event)),
+                  style: {"width":"120px"}
+                }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
             })
           ]),
           _: 1 /* STABLE */
@@ -1014,6 +1229,34 @@ return function render(_ctx, _cache) {
                   "onUpdate:modelValue": _cache[58] || (_cache[58] = $event => ((_ctx.setForm.hotlink) = $event)),
                   placeholder: "允许来源域名（空格分隔），留空关闭；如 rt888.icu www.rt888.icu"
                 }, null, 8 /* PROPS */, ["modelValue"])
+              ]),
+              _: 1 /* STABLE */
+            }),
+            _createVNode(_component_el_form_item, { label: "绑定域名" }, {
+              default: _withCtx(() => [
+                _createElementVNode("div", { style: {"display":"flex","flex-wrap":"wrap","gap":"6px","margin-bottom":"8px"} },
+                  _ctx.setForm.domainsList.map(d => _createVNode(_component_el_tag, {
+                    key: d, closable: "", size: "small",
+                    onClose: $event => (_ctx.removeDomain(d))
+                  }, {
+                    default: _withCtx(() => [ _createTextVNode(_toDisplayString(d), 1 /* TEXT */) ]),
+                    _: 2 /* DYNAMIC */
+                  }, 1024 /* DYNAMIC */, ["key", "onClose"]))),
+                _createElementVNode("div", { style: {"display":"flex","gap":"8px","width":"100%"} }, [
+                  _createVNode(_component_el_input, {
+                    modelValue: _ctx.setForm.newDomain,
+                    "onUpdate:modelValue": _cache[76] || (_cache[76] = $event => ((_ctx.setForm.newDomain) = $event)),
+                    placeholder: "输入要绑定的域名，如 bbs.example.com",
+                    style: {"flex":"1"}
+                  }, null, 8 /* PROPS */, ["modelValue"]),
+                  _createVNode(_component_el_button, {
+                    size: "small", type: "primary", plain: "",
+                    onClick: _ctx.addDomain
+                  }, {
+                    default: _withCtx(() => [ _createTextVNode("添加", -1 /* CACHED */) ]),
+                    _: 1 /* STABLE */
+                  }, 8 /* PROPS */, ["onClick"])
+                ])
               ]),
               _: 1 /* STABLE */
             })

@@ -39,7 +39,7 @@ export default {
     },
     canWrite() { return hasPerm('files:write') },
   },
-  mounted() { this.load('') },
+  mounted() { const q = this.$route?.query?.path; this.load(q || '') },
   methods: {
     fmtBytes, fmtTime, hasPerm,
     async load(path, silent = false) {

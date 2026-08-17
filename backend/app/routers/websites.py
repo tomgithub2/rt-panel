@@ -5,7 +5,7 @@ import shutil
 import time
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 
 from ..audit import audit
 from ..auth import get_client_ip, require_feature, require_perm
@@ -69,19 +69,17 @@ def _find_engine() -> str:
     return ''
 
 
-def _nginx_log_path(logtype: str) -> str:
-    """定位 Nginx 访问/错误日志文件（跨平台）。"""
-    fname = f'{logtype}.log'
+def _nginx_log_path(logtype: str, domain: str = '') -> str:
+    """定位 Nginx 访问/错误日志文件（跨平台）；带域名时按站点独立日志。"""
     if IS_WIN:
         roots = [r'C:\Tengine\logs', r'C:\nginx\logs',
                  os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'Tengine', 'logs'),
                  os.path.join(os.environ.get('ProgramFiles', r'C:\Program Files'), 'nginx', 'logs')]
-        for d in roots:
-            p = os.path.join(d, fname)
-            if os.path.isfile(p):
-                return p
-        return os.path.join(roots[0], fname)
-    return f'/var/log/nginx/{fname}'
+        base = next((d for d in roots if os.path.isdir(d)), roots[0])
+    else:
+        base = '/var/log/nginx'
+    fname = f'{domain}.{logtype}.log' if domain else f'{logtype}.log'
+    return os.path.join(base, fname)
 
 
 def _tail_file(path: str, n: int) -> str:
@@ -460,7 +458,7 @@ def site_logs(sid: int, type: str = 'access', lines: int = 200,
     if type not in ('access', 'error'):
         raise HTTPException(status_code=400, detail='日志类型无效（access/error）')
     lines = min(max(int(lines), 1), 2000)
-    logPath = _nginx_log_path(type)
+    logPath = _nginx_log_path(type, wzRow['domain'])
     if not os.path.isfile(logPath):
         return {'path': logPath, 'text': '', 'domain': wzRow['domain'],
                 'error': '日志文件不存在（Nginx 未安装或未启用访问日志）'}
@@ -468,6 +466,111 @@ def site_logs(sid: int, type: str = 'access', lines: int = 200,
     tailRows = rawTxt.splitlines()[-lines:]
     return {'path': logPath, 'text': '\n'.join(tailRows),
             'lines': len(tailRows), 'domain': wzRow['domain']}
+
+
+@router.get('/{sid}/stats')
+def site_stats(sid: int, user: dict = Depends(require_perm('websites:view'))):
+    """宝塔式流量统计：今日 PV/UV/流量 + 近 7 天趋势 + 今日 TOP 访问。"""
+    import datetime as _dt
+    site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    if not site:
+        raise HTTPException(status_code=404, detail='网站不存在')
+    log_path = _nginx_log_path('access', site['domain'])
+    today = {'pv': 0, 'uv': 0, 'bytes': 0}
+    days = []
+    top = []
+    available = os.path.isfile(log_path)
+    if available:
+        line_re = re.compile(
+            r'^(\S+) \S+ \S+ \[(\d{2})/(\w{3})/(\d{4}):(\d{2}):(\d{2}):(\d{2}) [^\]]+\] '
+            r'"(\S+) ([^"]*)" (\d{3}) (\d+|-)')
+        now_ts = time.time()
+        today_ips = set()
+        day_pv = {}
+        uri_cnt = {}
+        try:
+            with open(log_path, 'r', encoding='utf-8', errors='replace') as fh:
+                for line in fh:
+                    m = line_re.match(line)
+                    if not m:
+                        continue
+                    ip, dd, mon, yy, hh, mm, ss, method, uri, status, bts = m.groups()
+                    try:
+                        line_ts = time.mktime(_dt.datetime.strptime(
+                            f'{dd} {mon} {yy} {hh}:{mm}:{ss}', '%d %b %Y %H:%M:%S').timetuple())
+                    except ValueError:
+                        continue
+                    dstr = _dt.datetime.fromtimestamp(line_ts).strftime('%m-%d')
+                    day_pv[dstr] = day_pv.get(dstr, 0) + 1
+                    if line_ts >= now_ts - 86400:
+                        today['pv'] += 1
+                        today_ips.add(ip)
+                        if bts != '-':
+                            today['bytes'] += int(bts)
+                        uri_cnt[f'{method} {uri}'] = uri_cnt.get(f'{method} {uri}', 0) + 1
+        except Exception:
+            pass
+        today['uv'] = len(today_ips)
+        for i in range(6, -1, -1):
+            d = _dt.datetime.fromtimestamp(now_ts - i * 86400).strftime('%m-%d')
+            days.append({'date': d, 'pv': day_pv.get(d, 0)})
+        top = [{'uri': k, 'count': v} for k, v in sorted(uri_cnt.items(), key=lambda x: -x[1])[:10]]
+    return {'today': today, 'days': days, 'top': top, 'log': log_path, 'available': available}
+
+
+@router.post('/import')
+async def site_import(zipfile: UploadFile = File(...), domain: str = Form(''),
+                      port: int = Form(80),
+                      user: dict = Depends(require_perm('websites:manage'))):
+    """一键搬家：上传网站 zip 备份 → 自动安全解压并建站。"""
+    from .files import _extract_zip_safely
+    from ..config import TMP_DIR
+    domain = str(domain or '').strip().lower()
+    if not re.match(r'^[a-z0-9\.\-\*]+$', domain):
+        raise HTTPException(status_code=400, detail='域名无效')
+    if query('SELECT id FROM websites WHERE domain=?', (domain,), one=True):
+        raise HTTPException(status_code=409, detail='该域名已存在')
+    if not 1 <= port <= 65535:
+        raise HTTPException(status_code=400, detail='端口无效')
+    ts = str(int(now()))
+    tmp_pkg = os.path.join(TMP_DIR, f'import_{ts}.zip')
+    tmp_ext = os.path.join(TMP_DIR, f'import_x_{ts}')
+    data = await zipfile.read()
+    if len(data) < 1024:
+        raise HTTPException(status_code=400, detail='压缩包内容异常')
+    with open(tmp_pkg, 'wb') as fh:
+        fh.write(data)
+    os.makedirs(tmp_ext, exist_ok=True)
+    try:
+        _extract_zip_safely(tmp_pkg, tmp_ext)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f'解压失败: {e}')
+    root = os.path.join(WWWROOT_DIR, domain)
+    os.makedirs(root, exist_ok=True)
+    children = [p for p in os.listdir(tmp_ext) if not p.startswith('.')]
+    if len(children) == 1 and os.path.isdir(os.path.join(tmp_ext, children[0])):
+        inner = os.path.join(tmp_ext, children[0])
+        for item in os.listdir(inner):
+            shutil.move(os.path.join(inner, item), os.path.join(root, item))
+    else:
+        for item in children:
+            shutil.move(os.path.join(tmp_ext, item), os.path.join(root, item))
+    sid = execute(
+        'INSERT INTO websites (domain,root,port,type,engine,config,status,created_at) '
+        'VALUES (?,?,?,?,?,?,?,?)',
+        (domain, root, port, 'static', 'nginx', '', 0, now()))
+    execute('INSERT OR IGNORE INTO site_settings (site_id) VALUES (?)', (sid,))
+    _render_nginx()
+    audit(user['username'], get_client_ip(request), 'website_import',
+          f'导入网站 {domain}', 'warning')
+    try:
+        os.remove(tmp_pkg)
+        shutil.rmtree(tmp_ext, ignore_errors=True)
+    except Exception:
+        pass
+    return {'ok': True, 'id': sid, 'msg': f'网站 {domain} 导入完成'}
 
 
 # ---------------------------------------------------------------- 网站高级设置（伪静态/重定向/密码/防盗链）
@@ -597,23 +700,21 @@ def _render_single(site: dict) -> str:
         extra += f'\n    # 伪静态规则\n    location / {{\n        {pseudo_rules}\n    }}\n'
     index_doc = (st.get('index_doc') or '').strip()
     index_line = f'    index {index_doc};' if index_doc else '    index index.html index.htm index.php;'
-    # PHP 站点：自动探测 PHP-FPM socket 并挂解析（一键部署的程序直接可用）
-    if site['type'] == 'php':
-        sock = _php_fpm_sock()
-        if sock:
-            extra += (f'\n    # PHP-FPM 解析（自动探测）\n'
-                      f'    location ~ \\.php$ {{\n'
-                      f'        fastcgi_pass unix:{sock};\n'
-                      f'        fastcgi_index index.php;\n'
-                      f'        include fastcgi_params;\n'
-                      f'    }}\n')
+    # PHP 站点：自动探测 PHP-FPM socket（未探测到用默认路径，装了 PHP 后即生效）
+    php_upstream = (_php_fpm_sock() or '/run/php/php-fpm.sock')
+    # 宝塔式：站点独立访问/错误日志（目录不存在则跳过，避免 nginx reload 失败）
+    log_lines = ''
+    log_dir = os.path.dirname(_nginx_log_path('access', domain))
+    if os.path.isdir(log_dir):
+        log_lines = (f'    access_log {os.path.join(log_dir, domain + ".access.log").replace(chr(92), "/")};\n'
+                     f'    error_log {os.path.join(log_dir, domain + ".error.log").replace(chr(92), "/")};\n')
     if site['type'] == 'proxy':
         target = site['config']
         base = f'''server {{
     listen {site['port']};
     listen [::]:{site['port']};
     server_name {server_name};
-{waf}{extra}
+{log_lines}{waf}{extra}
     location / {{
         proxy_pass {target};
         proxy_set_header Host $host;
@@ -631,7 +732,7 @@ def _render_single(site: dict) -> str:
     listen {site['port']};
     listen [::]:{site['port']};
     server_name {server_name};
-{waf}{extra}
+{log_lines}{waf}{extra}
     root {site['root']};
 {index_line}
 
@@ -641,7 +742,7 @@ def _render_single(site: dict) -> str:
 
     location ~ \\.php$ {{
         try_files $uri =404;
-        fastcgi_pass unix:/run/php/php-fpm.sock;
+        fastcgi_pass unix:{php_upstream};
         fastcgi_index index.php;
         fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
         include fastcgi_params;
