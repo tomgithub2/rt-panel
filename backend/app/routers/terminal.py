@@ -16,6 +16,20 @@ from ..rbac import role_permissions
 router = APIRouter(tags=['terminal'])
 
 
+def _ws_origin_ok(ws) -> bool:
+    """校验 WebSocket 来源与访问 Host 一致，防止跨站 WebSocket 劫持（CSWSH）。"""
+    origin = ws.headers.get('origin', '')
+    host = ws.headers.get('host', '')
+    if not origin or not host:
+        return True  # 非浏览器客户端（脚本/工具）不强制
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        return parsed.scheme in ('http', 'https') and parsed.netloc == host
+    except Exception:
+        return False
+
+
 class PtySession:
     """跨平台伪终端封装（Linux: pty / Windows: pywinpty）。"""
 
@@ -101,6 +115,9 @@ class _LinuxPty:
 @router.websocket('/ws/terminal')
 async def ws_terminal(ws: WebSocket):
     """?token=JWT 鉴权后建立终端会话。"""
+    if not _ws_origin_ok(ws):
+        await ws.close(code=1008, reason='Origin rejected')
+        return
     token = ws.query_params.get('token', '')
     try:
         payload = decode_token(token)

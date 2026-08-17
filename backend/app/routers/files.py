@@ -288,15 +288,24 @@ async def upload(path: str, files: list[UploadFile],
                  user: dict = Depends(require_perm('files:write'))):
     dest = _norm(path)
     os.makedirs(dest, exist_ok=True)
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail='单次最多上传 10 个文件')
     saved = []
+    total = 0
     for f in files:
         name = os.path.basename(f.filename or '')
+        if not name:
+            continue
         fp = os.path.join(dest, name)
         with open(fp, 'wb') as out:
             while True:
                 chunk = await f.read(1024 * 1024)
                 if not chunk:
                     break
+                total += len(chunk)
+                if total > 1024 * 1024 * 1024:  # 单次上传总量上限 1GB，防撑爆磁盘
+                    raise HTTPException(status_code=413,
+                                        detail='单次上传总量超过 1GB，已中止')
                 out.write(chunk)
         saved.append(name)
     return {'ok': True, 'saved': saved}

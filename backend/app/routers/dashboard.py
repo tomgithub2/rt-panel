@@ -21,6 +21,20 @@ _WS_TICK = 2
 _TODAY_WINDOW = 86400
 
 
+def _ws_origin_ok(ws) -> bool:
+    """校验 WebSocket 来源与访问 Host 一致，防止跨站 WebSocket 劫持（CSWSH）。"""
+    origin = ws.headers.get('origin', '')
+    host = ws.headers.get('host', '')
+    if not origin or not host:
+        return True  # 非浏览器客户端（脚本/工具）不强制
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(origin)
+        return parsed.scheme in ('http', 'https') and parsed.netloc == host
+    except Exception:
+        return False
+
+
 @router.get('/overview')
 def overview(user: dict = Depends(get_current_user)):
     data = sysinfo.overview()
@@ -57,6 +71,9 @@ async def ws_realtime(ws: WebSocket):
     """实时推送：每 2 秒发送经过认证的 CPU、内存和网络速率。"""
     # 浏览器 WebSocket 无法携带 Authorization 头，令牌由前端以查询参数传入。
     # 认证必须在 accept 前完成，避免匿名客户端订阅主机实时状态。
+    if not _ws_origin_ok(ws):
+        await ws.close(code=1008, reason='Origin rejected')
+        return
     token = ws.query_params.get('token', '')
     try:
         payload = decode_token(token)
