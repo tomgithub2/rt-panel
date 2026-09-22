@@ -166,7 +166,9 @@ def build_windows(panel_dir: str):
     stub_out = os.path.join(stage, '..', 'stub_tmp.exe')
     stub_out = os.path.normpath(os.path.join(RELEASE, 'win', 'stub_build.exe'))
     print('[*] 编译安装器存根（csc）...')
+    # 显式引用 WinForms：存根出错时要弹窗提示，不能像以前那样静默失败
     r = subprocess.run([csc, '/nologo', '/target:winexe', '/optimize+',
+                        '/r:System.Windows.Forms.dll',
                         f'/win32manifest:{manifest}', f'/out:{stub_out}', stub_src],
                        capture_output=True, timeout=120)
     if r.returncode != 0:

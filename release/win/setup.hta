@@ -27,6 +27,14 @@ var timer = null;
 var finished = false;
 var setupToken = "";
 var panelPort = 8000;
+var lastLen = -1;
+var lastChange = new Date().getTime();
+
+// 进度只认 ASCII 标签：日志里的中文在 FSO 不同读取编码下匹配不上（踩过坑）
+var STEP_PCT = {
+  "admin-ok": 12, "copy-done": 30, "py-ok": 50, "py-installed": 50,
+  "deps-done": 75, "autostart-done": 88, "shortcut-done": 93
+};
 
 function startInstall() {
   if (finished) return;
@@ -51,57 +59,79 @@ function esc(s) {
 function poll() {
   if (!FSO.FileExists(logFile)) return;
   var text = "";
-  try { text = FSO.OpenTextFile(logFile, 1, false, -1).ReadAll(); } catch (e) {}
+  try { text = FSO.OpenTextFile(logFile, 1, false, -1).ReadAll(); } catch (e) { return; }
   var lines = text.split(/\r?\n/).filter(function (l) { return l.length > 0; });
-  var consoleEl = document.getElementById("console");
-  consoleEl.innerHTML = "";
-  var pct = 5;
-  var maxPct = 5;
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i];
-    var cls = "log-line";
-    var raw = line.replace(/^\[\d\d:\d\d:\d\d\]\s*/, "");
-    if (raw.indexOf("错误") >= 0) { cls = "log-line err"; maxPct = Math.max(maxPct, 30); }
-    else if (raw.indexOf("警告") >= 0) { cls = "log-line warn"; }
-    var div = document.createElement("div");
-    div.className = cls;
-    div.innerHTML = esc(line);
-    consoleEl.appendChild(div);
-    if (raw.indexOf("管理员权限 OK") >= 0) maxPct = Math.max(maxPct, 12);
-    if (raw.indexOf("文件复制完成") >= 0) maxPct = Math.max(maxPct, 30);
-    if (raw.indexOf("Python 已就绪") >= 0 || raw.indexOf("Python 3.13 安装完成") >= 0) maxPct = Math.max(maxPct, 50);
-    if (raw.indexOf("依赖安装完成") >= 0) maxPct = Math.max(maxPct, 75);
-    if (raw.indexOf("开机自启注册成功") >= 0) maxPct = Math.max(maxPct, 88);
-    if (raw.indexOf("快捷方式创建完成") >= 0) maxPct = Math.max(maxPct, 93);
-  }
-  pct = Math.min(maxPct, 96);
-  document.getElementById("bar").style.width = pct + "%";
-  document.getElementById("pctText").innerHTML = pct + "%";
-  consoleEl.scrollTop = consoleEl.scrollHeight;
 
-  if (text.indexOf("安装流程全部完成") >= 0) {
-    finished = true;
-    window.clearInterval(timer);
-    var m = text.match(/初始化令牌[:：]\s*([0-9a-fA-F]{16})/);
-    if (m) setupToken = m[1];
-    var tokEl = document.getElementById("setupToken");
-    var tokLineEl = document.getElementById("setupTokenLine");
-    if (tokEl && setupToken) {
-      tokEl.innerHTML = esc(setupToken);
-    } else if (tokLineEl) {
-      tokLineEl.innerHTML = '初始化令牌请查看安装日志或数据目录 backend\\data\\setup_token.txt';
+  // 日志有变化就刷新"卡住"计时，长时间无输出说明安装进程已经不动了
+  if (text.length !== lastLen) { lastLen = text.length; lastChange = new Date().getTime(); }
+
+  var consoleEl = document.getElementById("console");
+  if (consoleEl) {
+    consoleEl.innerHTML = "";
+    var maxPct = 5;
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i];
+      var raw = line.replace(/^\[\d\d:\d\d:\d\d\]\s*/, "");
+      var m = raw.match(/^\[STEP\]([a-z\-]+)$/);
+      if (m) { var p = STEP_PCT[m[1]]; if (p && p > maxPct) maxPct = p; continue; }
+      if (raw.indexOf("##RT-") === 0) continue;   // 内部哨兵不展示
+      var cls = "log-line";
+      if (raw.indexOf("错误") >= 0) cls = "log-line err";
+      else if (raw.indexOf("警告") >= 0) cls = "log-line warn";
+      var div = document.createElement("div");
+      div.className = cls;
+      div.innerHTML = esc(line);
+      consoleEl.appendChild(div);
     }
-    var addrEl = document.getElementById("panelAddr");
-    if (addrEl) addrEl.innerHTML = "http://127.0.0.1:" + panelPort;
-    document.getElementById("bar").style.width = "100%";
-    document.getElementById("pctText").innerHTML = "100%";
-    document.getElementById("barWrap").style.display = "none";
-    document.getElementById("successWrap").style.display = "block";
-  } else if (text.indexOf("错误:") >= 0 && text.indexOf("exit") >= 0) {
-    finished = true;
-    window.clearInterval(timer);
-    document.getElementById("failWrap").style.display = "block";
+    consoleEl.scrollTop = consoleEl.scrollHeight;
+    var pct = Math.min(maxPct, 96);
+    document.getElementById("bar").style.width = pct + "%";
+    document.getElementById("pctText").innerHTML = pct + "%";
   }
+
+  if (text.indexOf("##RT-DONE##") >= 0) {
+    showSuccess(text);
+  } else if (text.indexOf("##RT-FAIL##") >= 0) {
+    showFail("安装过程出错了，请把上面的日志发给作者协助排查。");
+  } else if (new Date().getTime() - lastChange > 360000) {
+    showFail("安装已经 6 分钟没有任何输出，可能已中断。");
+  }
+}
+
+function showSuccess(text) {
+  if (finished) return;
+  finished = true;
+  window.clearInterval(timer);
+  var m = text.match(/SETUP-TOKEN:\s*([0-9a-fA-F]{16})/);
+  if (!m) m = text.match(/初始化令牌[:：]\s*([0-9a-fA-F]{16})/);
+  if (m) setupToken = m[1];
+  var tokEl = document.getElementById("setupToken");
+  var tokLineEl = document.getElementById("setupTokenLine");
+  if (tokEl && setupToken) {
+    tokEl.innerHTML = esc(setupToken);
+  } else if (tokLineEl) {
+    tokLineEl.innerHTML = '初始化令牌请查看安装日志或数据目录 backend\\data\\setup_token.txt';
+  }
+  var addrEl = document.getElementById("panelAddr");
+  if (addrEl) addrEl.innerHTML = "http://127.0.0.1:" + panelPort;
+  if (text.indexOf("##RT-WARN##") >= 0) {
+    var warnEl = document.getElementById("warnWrap");
+    if (warnEl) warnEl.style.display = "block";
+  }
+  document.getElementById("bar").style.width = "100%";
+  document.getElementById("pctText").innerHTML = "100%";
+  document.getElementById("progressWrap").style.display = "none";
+  document.getElementById("consoleWrap").style.display = "none";
+  document.getElementById("successWrap").style.display = "block";
+}
+
+function showFail(reason) {
+  if (finished) return;
+  finished = true;
+  window.clearInterval(timer);
+  var t = document.getElementById("failText");
+  if (t) t.innerHTML = esc(reason) + "<br/>日志文件：" + esc(logFile);
+  document.getElementById("failWrap").style.display = "block";
 }
 
 function openPanel() {
@@ -241,6 +271,11 @@ function closeWin() { window.close(); }
         <span style="color:#8d8677">免费版可绑 2 台机器 / 付费版可绑 10 台机器</span><br/>
         <span style="color:#8d8677">命令行：新开终端输入 rt 管理面板（rt status/restart/info…）</span>
       </div>
+      <div class="info-box" id="warnWrap" style="display:none;border-color:rgba(230,162,60,.5);background:rgba(230,162,60,.08)">
+        <span style="color:#e6a23c">提醒：面板端口暂时还没响应</span><br/>
+        <span style="color:#8d8677">稍等 10 秒再刷新访问地址；若一直打不开，请看安装目录下
+        backend\data\panel.log，或新开终端执行 rt restart 重试。</span>
+      </div>
       <button class="btn" onclick="openPanel()">打 开 面 板</button>
       <button class="btn ghost" style="margin-top:10px" onclick="closeWin()">关 闭</button>
     </div>
@@ -248,7 +283,7 @@ function closeWin() { window.close(); }
     <div id="failWrap">
       <div class="ok-big" style="color:#f56c6c">✘</div>
       <div style="text-align:center;font-size:18px;color:#f56c6c">安装未完成</div>
-      <div class="info-box">请根据上方日志排查问题后，重新运行安装程序。</div>
+      <div class="info-box" id="failText">请根据上方日志排查问题后，重新运行安装程序。</div>
       <button class="btn ghost" onclick="closeWin()">关 闭</button>
     </div>
 

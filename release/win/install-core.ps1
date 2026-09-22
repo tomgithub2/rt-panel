@@ -1,4 +1,9 @@
+﻿# Created by 小杜 on 2026/08
 # RT面板 Windows 安装核心逻辑（由 setup.hta 图形向导调用，也可静默运行）
+#
+# 约定：凡是要中止的失败分支，都必须先打 ##RT-FAIL## 哨兵再 exit。
+# 原因：图形向导靠 ASCII 哨兵判断成败 —— 日志里的中文在不同读取编码下会匹配不上，
+#       之前向导因此永远停在进度条上，看不到任何失败提示。
 param(
     [string]$InstallDir = "$env:ProgramFiles\RTPanel",
     [string]$LogFile = "$env:TEMP\rt-install.log",
@@ -8,27 +13,63 @@ param(
 
 $ErrorActionPreference = 'Continue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Set-Content -Path $LogFile -Value '' -Encoding UTF8
 
-# 端口校验：无效则回退默认 8000
-if ($Port -lt 1 -or $Port -gt 65535) {
-    Log "端口 $Port 无效，使用默认端口 8000"
-    $Port = 8000
-}
+# 日志固定 UTF-16LE：向导用 FSO(TristateTrue) 读，两边编码必须对齐，否则中文全是乱码
+Set-Content -Path $LogFile -Value '' -Encoding Unicode
+
+$encNoBom = New-Object System.Text.UTF8Encoding($false)   # 配置/启动器都要求不带 BOM
+$encAscii = New-Object System.Text.ASCIIEncoding
 
 function Log($msg) {
     $line = "[{0}] {1}" -f (Get-Date -Format 'HH:mm:ss'), $msg
-    Add-Content -Path $LogFile -Value $line -Encoding UTF8
+    Add-Content -Path $LogFile -Value $line -Encoding Unicode
+}
+function Step($tag, $msg) {
+    Log $msg
+    Log "[STEP]$tag"
+}
+function Warn($msg) {
+    Log "警告: $msg"
+    Log '##RT-WARN##'
+}
+function Fail($msg) {
+    Log "错误: $msg"
+    Log '##RT-FAIL##'
+    exit 1
+}
+
+# 应用商店的 python.exe 是个占位壳：能被 Get-Command 找到，但跑不了脚本，
+# 只按"命令存在"判断会一路装依赖失败，所以必须实跑一次拿版本号才算数。
+function Test-Python($exe) {
+    if (-not $exe) { return $null }
+    if ($exe -like '*\WindowsApps\*') {
+        Log "跳过应用商店占位程序: $exe"
+        return $null
+    }
+    try {
+        $out = & $exe -c "import sys;print('%d.%d' % sys.version_info[:2])" 2>$null
+    } catch {
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $v = ("$out").Trim()
+    if ($v -notmatch '^\d+\.\d+$') { return $null }
+    return $v
+}
+
+# 端口校验：无效则回退默认 8000（必须放在 Log 定义之后，否则日志函数还不存在）
+if ($Port -lt 1 -or $Port -gt 65535) {
+    Log "端口 $Port 无效，使用默认端口 8000"
+    $Port = 8000
 }
 
 # ---------- 1. 管理员权限 ----------
 Log '检查管理员权限…'
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Log '错误: 需要管理员权限，请以管理员身份运行'
-    exit 1
+    Fail '需要管理员权限，请右键安装程序选择"以管理员身份运行"'
 }
-Log '管理员权限 OK'
+Step 'admin-ok' '管理员权限 OK'
 
 # ---------- 2. 复制文件 ----------
 Log "复制面板文件到 $InstallDir …"
@@ -37,11 +78,12 @@ try {
     if (-not (Test-Path $src)) { throw "未找到 panel 目录（$src）" }
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     Copy-Item -Path (Join-Path $src '*') -Destination $InstallDir -Recurse -Force
-    Log '文件复制完成'
 } catch {
-    Log "错误: $($_.Exception.Message)"
-    exit 1
+    Fail "文件复制失败: $($_.Exception.Message)"
 }
+$backendDir = Join-Path $InstallDir 'backend'
+$dataDir = Join-Path $backendDir 'data'
+Step 'copy-done' '文件复制完成'
 
 # ---------- 3. 安装系统运行环境（VC++ 运行库） ----------
 Log '安装系统运行环境（VC++ Redistributable）…'
@@ -71,78 +113,120 @@ try {
 # ---------- 4. 检测/安装 Python ----------
 Log '检测 Python 环境…'
 $pyCmd = $null
+$pyVer = ''
 foreach ($cand in @('py', 'python', 'python3')) {
     $c = Get-Command $cand -ErrorAction SilentlyContinue
-    if ($c) {
-        $pyCmd = $c.Source
-        break
-    }
+    if (-not $c -or -not $c.Source) { continue }
+    $v = Test-Python $c.Source
+    if ($v) { $pyCmd = $c.Source; $pyVer = $v; break }
 }
 if (-not $pyCmd) {
-    Log '未检测到 Python，尝试 winget 安装 Python 3.13（约 2-5 分钟）…'
+    Log '未检测到可用的 Python，尝试 winget 安装 Python 3.13（约 2-5 分钟）…'
     $w = Get-Command winget -ErrorAction SilentlyContinue
     if ($w) {
-        & winget install --id Python.Python.3.13 -e --accept-source-agreements --accept-package-agreements --silent | Out-Null
-        $pyCmd = (Get-Command py -ErrorAction SilentlyContinue).Source
+        & winget install --id Python.Python.3.13 -e --accept-source-agreements --accept-package-agreements --silent 2>&1 | Out-Null
+        # winget 刚装完，当前进程的 PATH 还是旧的，从注册表重新拼一次
+        try {
+            $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+        } catch { }
+        foreach ($cand in @('py', 'python')) {
+            $c = Get-Command $cand -ErrorAction SilentlyContinue
+            if (-not $c -or -not $c.Source) { continue }
+            $v = Test-Python $c.Source
+            if ($v) { $pyCmd = $c.Source; $pyVer = $v; break }
+        }
+        # 再兜底扫常见安装位置（PATH 没刷新时最后的办法）
+        if (-not $pyCmd) {
+            $globs = @("$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe",
+                       "$env:ProgramFiles\Python3*\python.exe",
+                       "$env:SystemDrive\Python3*\python.exe")
+            foreach ($g in $globs) {
+                $hits = Get-ChildItem $g -ErrorAction SilentlyContinue | Sort-Object FullName -Descending
+                foreach ($h in $hits) {
+                    $v = Test-Python $h.FullName
+                    if ($v) { $pyCmd = $h.FullName; $pyVer = $v; break }
+                }
+                if ($pyCmd) { break }
+            }
+        }
     }
     if (-not $pyCmd) {
-        Log '错误: 自动安装 Python 失败，请手动安装 https://www.python.org/downloads/ （勾选 Add to PATH）后重试'
-        exit 1
+        Fail '未检测到 Python 且自动安装失败：请手动安装 Python 3.8+（安装时勾选 Add Python to PATH）后重新运行安装程序'
     }
-    Log 'Python 3.13 安装完成'
+    Step 'py-installed' "Python $pyVer 安装完成: $pyCmd"
 } else {
-    Log "Python 已就绪: $pyCmd"
+    Step 'py-ok' "Python 已就绪: $pyCmd ($pyVer)"
+}
+if ($pyVer -match '^(\d+)\.(\d+)$') {
+    if ([int]$Matches[1] -lt 3 -or ([int]$Matches[1] -eq 3 -and [int]$Matches[2] -lt 8)) {
+        Warn "Python 版本偏低（$pyVer），面板要求 3.8+，建议升级后再使用"
+    }
 }
 
 # ---------- 5. 安装面板依赖 ----------
-$depsDir = Join-Path $InstallDir 'backend\.deps'
-if (-not (Test-Path (Join-Path $depsDir 'fastapi'))) {
+Log '检查面板依赖…'
+$depsDir = Join-Path $backendDir '.deps'
+$depsOk = $false
+if (Test-Path (Join-Path $depsDir 'fastapi')) {
+    & $pyCmd -c "import sys;sys.path.insert(0,r'$depsDir');import fastapi,uvicorn" 2>$null
+    if ($LASTEXITCODE -eq 0) { $depsOk = $true } else { Log '警告: 已有依赖不完整，重新安装' }
+}
+if (-not $depsOk) {
     Log '安装面板依赖（首次约 1-2 分钟，走清华镜像）…'
-    Push-Location (Join-Path $InstallDir 'backend')
-    & $pyCmd -m pip install -r requirements.txt --target .deps -i https://pypi.tuna.tsinghua.edu.cn/simple --quiet
+    Push-Location $backendDir
+    & $pyCmd -m pip install -r requirements.txt --target .deps --disable-pip-version-check -i https://pypi.tuna.tsinghua.edu.cn/simple --quiet
     if ($LASTEXITCODE -ne 0) {
-        & $pyCmd -m pip install -r requirements.txt --target .deps --quiet
+        Log '镜像源安装失败，改用官方源重试…'
+        & $pyCmd -m pip install -r requirements.txt --target .deps --disable-pip-version-check --quiet
     }
     Pop-Location
-    if (-not (Test-Path (Join-Path $depsDir 'fastapi'))) {
-        Log '错误: 依赖安装失败，请检查网络后重新运行安装程序'
-        exit 1
+    if (Test-Path (Join-Path $depsDir 'fastapi')) {
+        # 装了不代表能用（镜像给错架构轮子时目录也在），必须真的 import 一次
+        & $pyCmd -c "import sys;sys.path.insert(0,r'$depsDir');import fastapi,uvicorn" 2>$null
+        if ($LASTEXITCODE -eq 0) { $depsOk = $true }
     }
-} else {
-    Log '依赖已存在，跳过'
+    if (-not $depsOk) {
+        Fail '依赖安装失败：请检查网络或代理后重新运行安装程序'
+    }
 }
-Log '依赖安装完成'
+Step 'deps-done' '依赖安装完成'
 
 # ---------- 6. 写入配置 ----------
 Log "写入面板配置（端口 $Port）…"
-$dataDir = Join-Path $InstallDir 'backend\data'
 New-Item -ItemType Directory -Force -Path $dataDir | Out-Null
-$cfg = @{
+$cfg = [ordered]@{
     port = $Port
     bind_host = '0.0.0.0'
     site_name = 'RT面板'
     account_server = $AccountServer
     theme = 'blackgold'
 } | ConvertTo-Json
-Set-Content -Path (Join-Path $dataDir 'config.json') -Value $cfg -Encoding UTF8
+# 不写 BOM：Python 侧按 utf-8 读，带 BOM 会让配置被整体忽略（回落到默认值）
+# 注意：PS 5.1 解析器不接受把 (Join-Path …) 直接当 .NET 方法实参，路径必须先落变量
+$cfgPath = Join-Path $dataDir 'config.json'
+[System.IO.File]::WriteAllText($cfgPath, $cfg, $encNoBom)
 
 # 生成网页初始化令牌（安装完成后在浏览器完成管理员账号 + 官网账户配置）
 $tokenBytes = New-Object byte[] 8
 [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($tokenBytes)
 $setupToken = ($tokenBytes | ForEach-Object { $_.ToString('x2') }) -join ''
-Set-Content -Path (Join-Path $dataDir 'setup_token.txt') -Value $setupToken -Encoding ASCII
+$tokenPath = Join-Path $dataDir 'setup_token.txt'
+[System.IO.File]::WriteAllText($tokenPath, $setupToken, $encAscii)
 Log "初始化令牌: $setupToken（仅用于首次网页初始化，用完即焚）"
+Log "SETUP-TOKEN: $setupToken"
 
 # ---------- 7. 启动器 ----------
 Log '创建启动器…'
 $launcher = Join-Path $InstallDir 'start-panel.cmd'
-@"
-@echo off
-chcp 65001 >nul
-title RT面板
-cd /d "$(Join-Path $InstallDir 'backend')"
-"$pyCmd" run.py
-"@ | Set-Content -Path $launcher -Encoding UTF8
+# 启动器整体保持 ASCII 且 CRLF、不带 BOM：cmd.exe 对 BOM 和多字节行都很敏感
+$launcherText = (@(
+    '@echo off',
+    'chcp 65001 >nul',
+    'title RT Panel',
+    'cd /d "' + $backendDir + '"',
+    '"' + $pyCmd + '" run.py >> "data\panel.log" 2>&1'
+) -join "`r`n") + "`r`n"
+[System.IO.File]::WriteAllText($launcher, $launcherText, $encNoBom)
 
 # rt 命令行管理工具（类宝塔 bt 命令）
 $rtSrc = Join-Path $PSScriptRoot 'rt.cmd'
@@ -168,7 +252,7 @@ Log '注册开机自启（计划任务）…'
 $taskName = 'RTPanel'
 & schtasks /create /tn $taskName /tr "`"$launcher`"" /sc onstart /ru SYSTEM /rl highest /f 2>&1 | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    Log '开机自启注册成功'
+    Step 'autostart-done' '开机自启注册成功'
 } else {
     Log '警告: 开机自启注册失败（不影响使用，可在任务计划程序中手动创建）'
 }
@@ -189,13 +273,28 @@ try {
     $sm.TargetPath = $launcher
     $sm.WorkingDirectory = $InstallDir
     $sm.Save()
-    Log '快捷方式创建完成'
+    Step 'shortcut-done' '快捷方式创建完成'
 } catch {
     Log "警告: 快捷方式创建失败（$($_.Exception.Message)）"
 }
 
-# ---------- 10. 启动面板 ----------
+# ---------- 10. 启动面板并确认端口真的起来了 ----------
 Log '启动面板服务…'
 & schtasks /run /tn $taskName 2>&1 | Out-Null
-Log "安装流程全部完成。访问 http://服务器IP:$Port 输入初始化令牌 $setupToken 完成网页初始化"
+$url = "http://127.0.0.1:$Port"
+$up = $false
+for ($i = 0; $i -lt 15; $i++) {
+    Start-Sleep -Seconds 2
+    try {
+        $resp = Invoke-WebRequest -Uri "$url/api/health" -UseBasicParsing -TimeoutSec 3
+        if ($resp.StatusCode -eq 200) { $up = $true; break }
+    } catch { }
+}
+if ($up) {
+    Log "面板已启动: $url"
+} else {
+    Warn "面板端口 $Port 暂未响应：可以稍等 10 秒再访问 $url；若一直打不开，请查看 $backendDir\data\panel.log"
+}
+Log "安装流程全部完成。访问 $url 输入初始化令牌 $setupToken 完成网页初始化"
+Log '##RT-DONE##'
 exit 0
