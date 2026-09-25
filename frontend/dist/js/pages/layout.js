@@ -231,7 +231,11 @@ return function render(_ctx, _cache) {
   }, [
     _createElementVNode("aside", _hoisted_2, [
       _createElementVNode("div", _hoisted_3, [
-        _cache[12] || (_cache[12] = _createElementVNode("span", { class: "logo-badge" }, "RT", -1 /* CACHED */)),
+        _cache[12] || (_cache[12] = _createElementVNode("img", {
+          class: "logo-img",
+          src: "/img/badge.png",
+          alt: "RT"
+        }, null, -1 /* CACHED */)),
         _createElementVNode("span", _hoisted_4, _toDisplayString(_ctx.store.panel?.site_name || 'RT面板'), 1 /* TEXT */)
       ]),
       _createElementVNode("nav", _hoisted_5, [
