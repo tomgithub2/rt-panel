@@ -130,10 +130,13 @@ def build_windows(panel_dir: str):
     os.makedirs(stage)
     panel_dst = os.path.join(stage, 'panel')
     shutil.copytree(panel_dir, panel_dst)
-    for f in ('setup.hta', 'install-core.ps1', 'setup.cmd', 'rt.cmd'):
+    for f in ('setup.hta', 'install-core.ps1', 'setup.cmd', 'rt.cmd',
+              'logo.png', 'preview.png', 'panel.ico'):
         src = os.path.join(RELEASE, 'win', f)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(stage, f))
+        else:
+            print(f'[!] 缺少安装向导随包文件: {f}')
 
     # ---------- 1. 构建自定义载荷格式 ----------
     # [marker 9B][count 4B][nameLen 4B][name][dataLen 8B][data]...
@@ -167,10 +170,14 @@ def build_windows(panel_dir: str):
     stub_out = os.path.normpath(os.path.join(RELEASE, 'win', 'stub_build.exe'))
     print('[*] 编译安装器存根（csc）...')
     # 显式引用 WinForms：存根出错时要弹窗提示，不能像以前那样静默失败
-    r = subprocess.run([csc, '/nologo', '/target:winexe', '/optimize+',
-                        '/r:System.Windows.Forms.dll',
-                        f'/win32manifest:{manifest}', f'/out:{stub_out}', stub_src],
-                       capture_output=True, timeout=120)
+    # /win32icon：资源管理器里显示 RT 品牌图标（找不到图标文件也不影响编译）
+    icon = os.path.join(RELEASE, 'win', 'panel.ico')
+    args = [csc, '/nologo', '/target:winexe', '/optimize+',
+            '/r:System.Windows.Forms.dll',
+            f'/win32manifest:{manifest}', f'/out:{stub_out}', stub_src]
+    if os.path.isfile(icon):
+        args.insert(-1, f'/win32icon:{icon}')
+    r = subprocess.run(args, capture_output=True, timeout=120)
     if r.returncode != 0:
         print('[!] csc 编译失败:', r.stdout.decode('gbk', 'ignore')[-500:])
         sys.exit(1)

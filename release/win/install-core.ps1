@@ -1,4 +1,4 @@
-﻿# Created by 小杜 on 2026/08
+# Created by 小杜 on 2026/08
 # RT面板 Windows 安装核心逻辑（由 setup.hta 图形向导调用，也可静默运行）
 #
 # 约定：凡是要中止的失败分支，都必须先打 ##RT-FAIL## 哨兵再 exit。
@@ -289,12 +289,24 @@ if ($LASTEXITCODE -eq 0) {
 
 # ---------- 9. 快捷方式 ----------
 Log '创建桌面/开始菜单快捷方式…'
+# 品牌图标随包附带：先装到安装目录，快捷方式引用它（.cmd 本身带不了图标）
+$iconSrc = Join-Path $PSScriptRoot 'panel.ico'
+$iconDst = Join-Path $InstallDir 'panel.ico'
+if (Test-Path $iconSrc) {
+    try {
+        Copy-Item -Path $iconSrc -Destination $iconDst -Force
+        Log '品牌图标已部署（panel.ico）'
+    } catch {
+        Log "警告: 图标复制失败（$($_.Exception.Message)）"
+    }
+}
 try {
     $ws = New-Object -ComObject WScript.Shell
     $desktop = $ws.CreateShortcut([Environment]::GetFolderPath('Desktop') + '\RT面板.lnk')
     $desktop.TargetPath = $launcher
     $desktop.WorkingDirectory = $InstallDir
     $desktop.Description = 'RT面板 - 高端服务器运维面板'
+    if (Test-Path $iconDst) { $desktop.IconLocation = "$iconDst,0" }
     $desktop.Save()
 
     $smDir = [Environment]::GetFolderPath('StartMenu') + '\Programs\RT面板'
@@ -302,6 +314,7 @@ try {
     $sm = $ws.CreateShortcut("$smDir\RT面板.lnk")
     $sm.TargetPath = $launcher
     $sm.WorkingDirectory = $InstallDir
+    if (Test-Path $iconDst) { $sm.IconLocation = "$iconDst,0" }
     $sm.Save()
     Step 'shortcut-done' '快捷方式创建完成'
 } catch {

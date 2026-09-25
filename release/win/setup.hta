@@ -169,6 +169,16 @@ function closeWin() { window.close(); }
     color: #0a0a0d; font-size: 34px; font-weight: bold; text-align: center;
     line-height: 66px; box-shadow: 0 0 34px rgba(212,175,55,.45);
   }
+  /* 品牌图与界面预览图：随载荷解压到同目录，按相对路径引用 */
+  .logo-img {
+    display: block; width: 300px; margin: 0 auto 16px;
+    filter: drop-shadow(0 6px 22px rgba(212,175,55,.28));
+  }
+  .preview {
+    display: block; width: 100%; margin: 14px 0 4px; border-radius: 10px;
+    border: 1px solid rgba(212,175,55,.28);
+    box-shadow: 0 10px 30px rgba(0,0,0,.45);
+  }
   h1 { margin: 0; text-align: center; font-size: 26px; letter-spacing: 3px;
     background: linear-gradient(135deg, #f5d061, #d4af37, #9a7a22);
     -webkit-background-clip: text; background-clip: text; color: transparent; }
@@ -226,7 +236,7 @@ function closeWin() { window.close(); }
 <div class="glow"></div>
 <div class="wrap">
   <div class="card">
-    <div class="logo">RT</div>
+    <img class="logo-img" src="logo.png" alt="RT面板" />
     <h1>RT面板</h1>
     <div class="sub">RT PANEL · 高端服务器运维面板 · 安装向导</div>
 
@@ -248,6 +258,7 @@ function closeWin() { window.close(); }
         说明：面板<b>永久免费</b>，安装完成后在<b>网页上</b>完成初始化：<br/>
         设置管理员用户名/密码，并可用<b>RT面板官网账户</b>绑定本机机器码
       </div>
+      <img class="preview" src="preview.png" alt="RT面板界面预览" />
       <button class="btn" id="btnStart" onclick="startInstall()">开 始 安 装</button>
     </div>
 
