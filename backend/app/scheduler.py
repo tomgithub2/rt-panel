@@ -415,7 +415,7 @@ def start():
     if not cfg.get('initialized'):
         save_config({'initialized': True})
     loops = [_sample_loop, _aggregate_loop, _alert_loop, _cron_loop, _ssl_renew_loop,
-             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop]
+             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop, _waf_crowd_loop]
     for fn in loops:
         t = threading.Thread(target=fn, daemon=True, name=f'ops-{fn.__name__}')
         t.start()
@@ -431,6 +431,19 @@ def _waf_scan_loop():
         try:
             from .routers.waf import scan_waf_hits
             scan_waf_hits()
+        except Exception:
+            pass
+
+
+def _waf_crowd_loop():
+    """多机辅助测试：每 45 秒尝试领取并执行一次其他机器的 WAF 测试任务。"""
+    while not _stop.is_set():
+        _stop.wait(45)
+        if _stop.is_set():
+            break
+        try:
+            from .waf_crowd import poll_once
+            poll_once()
         except Exception:
             pass
 

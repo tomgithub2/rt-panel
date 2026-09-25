@@ -30,6 +30,7 @@ DEFAULTS = {
     'account_server': 'https://www.rt888.icu',
     'language': 'zh-CN',
     'theme': 'lightgold',
+    'waf_crowd': True,
     'session_hours': 24,
     'max_login_fails': 5,
     'lock_minutes': 10,
