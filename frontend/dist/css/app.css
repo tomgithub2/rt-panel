@@ -756,11 +756,15 @@ body, .op-sidebar, .op-topbar, .op-card, .stat-card, .el-table, .menu-item {
               inset 0 1px 0 var(--premium-highlight);
 }
 .el-button--primary:hover { filter: brightness(1.07); box-shadow: 0 2px 4px rgba(60, 45, 10, .2), 0 12px 26px -10px var(--accent-glow), inset 0 1px 0 var(--premium-highlight); }
-.el-button--default {
+/* Element 给默认尺寸也挂 el-button--default，不加 :not 守卫会把主按钮的金属渐变
+   盖成浅底，出现白底白字（实测踩过） */
+.el-button--default:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info) {
   background: linear-gradient(180deg, var(--bg-elevated), var(--bg-input));
   border-color: var(--border);
 }
-.el-button--default:hover { border-color: var(--border-strong); color: var(--accent); }
+.el-button--default:not(.el-button--primary):not(.el-button--success):not(.el-button--warning):not(.el-button--danger):not(.el-button--info):hover {
+  border-color: var(--border-strong); color: var(--accent);
+}
 
 /* ---------- 表单：填充底 + 焦点光晕 ---------- */
 .el-input__wrapper, .el-select__wrapper, .el-textarea__inner {
@@ -799,4 +803,86 @@ body, .op-sidebar, .op-topbar, .op-card, .stat-card, .el-table, .menu-item {
 @media (prefers-reduced-motion: reduce) {
   .license-chip::before, .login-brand .brand-logo { animation: none; }
   .op-card, .stat-card, .el-button, .stat-card .stat-icon { transition: none; }
+}
+
+/* ============================================================
+   体检中心（重做）：评分环 + 问题清单 + 检查项网格
+   ============================================================ */
+.hc-hero {
+  display: flex; align-items: center; gap: 26px; padding: 22px 24px; flex-wrap: wrap;
+}
+.hc-gauge { position: relative; width: 118px; height: 118px; flex-shrink: 0; }
+.hc-ring { width: 118px; height: 118px; transform: rotate(-90deg); }
+.hc-ring-bg { fill: none; stroke: var(--bg-input); stroke-width: 9; }
+.hc-ring-fg {
+  fill: none; stroke-width: 9; stroke-linecap: round;
+  transition: stroke-dashoffset .9s cubic-bezier(.22, .8, .3, 1), stroke .3s;
+  filter: drop-shadow(0 2px 8px var(--accent-glow));
+}
+.hc-score {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; pointer-events: none;
+}
+.hc-score b { font-size: 34px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+.hc-score span { font-size: 11.5px; color: var(--text-secondary); margin-top: 5px; letter-spacing: .5px; }
+.hc-head { flex: 1; min-width: 260px; }
+.hc-title { font-size: 20px; font-weight: 600; }
+.hc-meta { margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); line-height: 1.8; }
+.hc-chips { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+.hc-chip {
+  display: inline-flex; align-items: baseline; gap: 6px;
+  padding: 6px 13px; border-radius: 999px; font-size: 12.5px;
+  background: var(--bg-input); border: 1px solid var(--border); color: var(--text-secondary);
+}
+.hc-chip b { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.hc-chip.is-ok b { color: var(--success); }
+.hc-chip.is-bad { border-color: color-mix(in srgb, var(--danger) 40%, transparent); }
+.hc-chip.is-bad b { color: var(--danger); }
+
+/* 需关注项清单 */
+.hc-list { display: flex; flex-direction: column; gap: 10px; }
+.hc-list-item {
+  display: flex; align-items: flex-start; gap: 14px; flex-wrap: wrap;
+  padding: 14px 16px; border-radius: 13px;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
+  border: 1px solid var(--border);
+}
+.hc-list-item.is-bad { border-left: 3px solid var(--danger); }
+.hc-li-main { flex: 1; min-width: 240px; }
+.hc-li-name { font-size: 14px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.hc-li-name::before {
+  content: ''; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--danger); box-shadow: 0 0 8px color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.hc-li-detail { margin-top: 6px; font-size: 12.5px; color: var(--text-regular); }
+.hc-li-tip {
+  flex: 1.2; min-width: 220px; font-size: 12.5px; color: var(--text-secondary);
+  padding-left: 14px; border-left: 1px dashed var(--border); line-height: 1.7;
+}
+.hc-go {
+  align-self: center; cursor: pointer; font-size: 12.5px; white-space: nowrap;
+  padding: 6px 12px; border-radius: 999px; color: var(--accent);
+  border: 1px solid var(--border); background: var(--accent-soft);
+  transition: background .18s, transform .18s, box-shadow .18s;
+}
+.hc-go:hover { background: var(--accent); color: var(--text-inverse); transform: translateX(2px); box-shadow: var(--shadow-glow); }
+
+/* 全部检查项：紧凑网格 */
+.hc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 4px 22px; }
+.hc-item {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border-radius: 10px; transition: background .18s;
+}
+.hc-item:hover { background: var(--accent-soft); }
+.hc-dot {
+  width: 7px; height: 7px; border-radius: 50%; margin-top: 6px; flex-shrink: 0;
+  background: var(--success); box-shadow: 0 0 7px color-mix(in srgb, var(--success) 45%, transparent);
+}
+.hc-item.is-bad .hc-dot { background: var(--danger); box-shadow: 0 0 7px color-mix(in srgb, var(--danger) 55%, transparent); }
+.hc-item-name { font-size: 13px; font-weight: 600; }
+.hc-item.is-bad .hc-item-name { color: var(--danger); }
+.hc-item-detail { font-size: 12px; color: var(--text-secondary); margin-top: 3px; line-height: 1.6; }
+@media (max-width: 760px) {
+  .hc-hero { gap: 18px; }
+  .hc-li-tip { border-left: none; padding-left: 0; }
 }
