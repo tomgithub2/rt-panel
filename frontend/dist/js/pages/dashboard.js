@@ -153,7 +153,7 @@ export default {
     resizeAll() { Object.values(this.charts).forEach(c => c && c.resize()) },
   },
   computed: {
-    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#d4af37' },
+    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#b8860b' },
     // echarts 画布吃不了 CSS 变量，以下全部换算成具体色值
     isLight() { return document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'lightgold' },
     titleHex() { return this.isLight ? '#49566b' : '#b8b2a3' },

@@ -31,7 +31,7 @@ export default {
   computed: {
     // 画布图表按主题取具体色值（echarts 不吃 CSS 变量）
     isLight() { return document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'lightgold' },
-    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#d4af37' },
+    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#b8860b' },
     splitHex() { return this.isLight ? 'rgba(23,32,48,.08)' : 'rgba(128,128,140,.12)' },
   },
   methods: {

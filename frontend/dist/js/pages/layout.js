@@ -77,10 +77,21 @@ export default {
       fa2Dialog: { show: false, secret: '', otpauth: '', code: '', enabled: !!store.user?.two_fa },
       // 二级菜单：默认仅展开「概览」，其余分组折叠（侧栏不再过长）
       openGroups: ['概览'],
+      // 侧栏折叠：状态持久化到 localStorage（rt_sidebar=1 表示折叠）
+      sidebarCollapsed: localStorage.getItem('rt_sidebar') === '1',
     }
   },
   computed: {
     title() { return this.$route.meta?.title || '' },
+    crumbs() {
+      // 面包屑：当前页所在分组 + 页面名（分组可点击，跳到该组第一个菜单）
+      const p = this.$route.path
+      for (const g of this.groups) {
+        const it = g.items.find(i => i.path === p)
+        if (it) return [{ label: g.title, path: g.items[0].path }, { label: it.label, path: p }]
+      }
+      return [{ label: this.$route.meta?.title || '仪表盘', path: '/dashboard' }]
+    },
     licenseChip() {
       const l = store.license
       if (!l) return '绑定查询中'
@@ -119,9 +130,13 @@ export default {
     visibleItems(group) {
       return group.items.filter(i => hasPerm(i.perm))
     },
+    toggleSidebar() {
+      this.sidebarCollapsed = !this.sidebarCollapsed
+      try { localStorage.setItem('rt_sidebar', this.sidebarCollapsed ? '1' : '0') } catch (e) {}
+    },
     switchTheme(key) {
       window.applyTheme(key)
-      ElMessage.success('已切换为' + (key === 'light' ? '亮色专业' : key === 'blackgold' ? '黑金' : key === 'lightgold' ? '白金' : '银黑') + '主题')
+      ElMessage.success('已切换为' + (key === 'lightgold' ? '白金' : key === 'light' ? '亮色' : '银黑') + '主题')
     },
     goto(path) { this.$router.push(path) },
     async logout() {
@@ -195,6 +210,7 @@ return function render(_ctx, _cache) {
   const _component_el_icon = _resolveComponent("el-icon")
   const _component_el_tooltip = _resolveComponent("el-tooltip")
   const _component_Brush = _resolveComponent("Brush")
+  const _component_Refresh = _resolveComponent("Refresh")
   const _component_el_dropdown_item = _resolveComponent("el-dropdown-item")
   const _component_el_dropdown_menu = _resolveComponent("el-dropdown-menu")
   const _component_el_dropdown = _resolveComponent("el-dropdown")
@@ -210,70 +226,133 @@ return function render(_ctx, _cache) {
   const _component_el_dialog = _resolveComponent("el-dialog")
   const _component_el_alert = _resolveComponent("el-alert")
 
-  return (_openBlock(), _createElementBlock("div", _hoisted_1, [
+  return (_openBlock(), _createElementBlock("div", {
+    class: _normalizeClass(["op-layout", { collapsed: _ctx.sidebarCollapsed }])
+  }, [
     _createElementVNode("aside", _hoisted_2, [
       _createElementVNode("div", _hoisted_3, [
         _cache[12] || (_cache[12] = _createElementVNode("span", { class: "logo-badge" }, "RT", -1 /* CACHED */)),
         _createElementVNode("span", _hoisted_4, _toDisplayString(_ctx.store.panel?.site_name || 'RT面板'), 1 /* TEXT */)
       ]),
       _createElementVNode("nav", _hoisted_5, [
-        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.visibleGroups, (g) => {
-          return (_openBlock(), _createElementBlock(_Fragment, {
-            key: g.title
-          }, [
-            (g.items.length)
-              ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                  _createElementVNode("div", _hoisted_6, [
-                    _createElementVNode("span", {
-                      class: "menu-group-title",
-                      onClick: $event => (_ctx.toggleGroup(g.title))
-                    }, _toDisplayString(g.title), 1 /* TEXT */),
-                    _createVNode(_component_el_icon, {
-                      class: _normalizeClass(["menu-group-arrow", { open: _ctx.isOpen(g.title) }]),
-                      onClick: $event => (_ctx.toggleGroup(g.title))
-                    }, {
-                      default: _withCtx(() => [
-                        (_openBlock(), _createBlock(_resolveDynamicComponent(
-                          _ctx.isOpen(g.title) ? 'ArrowDown' : 'ArrowRight')))
-                      ]),
-                      _: 1 /* STABLE */
-                    }, 8 /* PROPS */, ["class"])
-                  ]),
-                  (_ctx.isOpen(g.title))
+        (_ctx.sidebarCollapsed)
+          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.visibleGroups.flatMap(g => g.items), (it) => {
+                return (_openBlock(), _createElementBlock("div", {
+                  key: it.path,
+                  class: _normalizeClass(["menu-item", { active: _ctx.$route.path === it.path }]),
+                  title: it.label,
+                  onClick: $event => (_ctx.goto(it.path))
+                }, [
+                  _createVNode(_component_el_icon, null, {
+                    default: _withCtx(() => [
+                      (_openBlock(), _createBlock(_resolveDynamicComponent(it.icon)))
+                    ]),
+                    _: 2 /* DYNAMIC */
+                  }, 1024 /* DYNAMIC_SLOTS */)
+                ], 10 /* CLASS, PROPS */, _hoisted_7))
+              }), 128 /* KEYED_FRAGMENT */))
+            ], 64 /* STABLE_FRAGMENT */))
+          : (_openBlock(), _createElementBlock(_Fragment, { key: 1 }, [
+              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.visibleGroups, (g) => {
+                return (_openBlock(), _createElementBlock(_Fragment, {
+                  key: g.title
+                }, [
+                  (g.items.length)
                     ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
-                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(g.items, (it) => {
-                          return (_openBlock(), _createElementBlock("div", {
-                            key: it.path,
-                            class: _normalizeClass(["menu-item", { active: _ctx.$route.path === it.path }]),
-                            onClick: $event => (_ctx.goto(it.path))
-                          }, [
-                            _createVNode(_component_el_icon, null, {
-                              default: _withCtx(() => [
-                                (_openBlock(), _createBlock(_resolveDynamicComponent(it.icon)))
-                              ]),
-                              _: 2 /* DYNAMIC */
-                            }, 1024 /* DYNAMIC_SLOTS */),
-                            _createElementVNode("span", null, _toDisplayString(it.label), 1 /* TEXT */)
-                          ], 10 /* CLASS, PROPS */, _hoisted_7))
-                        }), 128 /* KEYED_FRAGMENT */))
+                        _createElementVNode("div", _hoisted_6, [
+                          _createElementVNode("span", {
+                            class: "menu-group-title",
+                            onClick: $event => (_ctx.toggleGroup(g.title))
+                          }, _toDisplayString(g.title), 1 /* TEXT */),
+                          _createVNode(_component_el_icon, {
+                            class: _normalizeClass(["menu-group-arrow", { open: _ctx.isOpen(g.title) }]),
+                            onClick: $event => (_ctx.toggleGroup(g.title))
+                          }, {
+                            default: _withCtx(() => [
+                              (_openBlock(), _createBlock(_resolveDynamicComponent(
+                                _ctx.isOpen(g.title) ? 'ArrowDown' : 'ArrowRight')))
+                            ]),
+                            _: 1 /* STABLE */
+                          }, 8 /* PROPS */, ["class"])
+                        ]),
+                        (_ctx.isOpen(g.title))
+                          ? (_openBlock(), _createElementBlock(_Fragment, { key: 0 }, [
+                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(g.items, (it) => {
+                                return (_openBlock(), _createElementBlock("div", {
+                                  key: it.path,
+                                  class: _normalizeClass(["menu-item", { active: _ctx.$route.path === it.path }]),
+                                  onClick: $event => (_ctx.goto(it.path))
+                                }, [
+                                  _createVNode(_component_el_icon, null, {
+                                    default: _withCtx(() => [
+                                      (_openBlock(), _createBlock(_resolveDynamicComponent(it.icon)))
+                                    ]),
+                                    _: 2 /* DYNAMIC */
+                                  }, 1024 /* DYNAMIC_SLOTS */),
+                                  _createElementVNode("span", null, _toDisplayString(it.label), 1 /* TEXT */)
+                                ], 10 /* CLASS, PROPS */, _hoisted_7))
+                              }), 128 /* KEYED_FRAGMENT */))
+                            ], 64 /* STABLE_FRAGMENT */))
+                          : _createCommentVNode("v-if", true)
                       ], 64 /* STABLE_FRAGMENT */))
                     : _createCommentVNode("v-if", true)
                 ], 64 /* STABLE_FRAGMENT */))
-              : _createCommentVNode("v-if", true)
-          ], 64 /* STABLE_FRAGMENT */))
-        }), 128 /* KEYED_FRAGMENT */))
+              }), 128 /* KEYED_FRAGMENT */))
+            ], 64 /* STABLE_FRAGMENT */))
       ])
     ]),
     _createElementVNode("div", _hoisted_8, [
       _createElementVNode("header", _hoisted_9, [
+        _createElementVNode("div", {
+          class: "topbar-toggle",
+          onClick: $event => (_ctx.toggleSidebar())
+        }, [
+          _createVNode(_component_el_icon, null, {
+            default: _withCtx(() => [
+              (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.sidebarCollapsed ? 'Expand' : 'Fold')))
+            ]),
+            _: 1 /* STABLE */
+          })
+        ]),
         _createElementVNode("div", _hoisted_10, [
-          _cache[13] || (_cache[13] = _createElementVNode("span", {
-            class: "gold-text",
-            style: {"margin-right":"8px"}
-          }, "/", -1 /* CACHED */)),
-          _createTextVNode(_toDisplayString(_ctx.title), 1 /* TEXT */)
+          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.crumbs, (c, i) => {
+            return (_openBlock(), _createElementBlock(_Fragment, {
+              key: c.path
+            }, [
+              (i > 0)
+                ? (_openBlock(), _createElementBlock("span", {
+                    key: 0,
+                    style: {"margin":"0 6px","color":"var(--text-secondary)"}
+                  }, "/", -1 /* CACHED */))
+                : _createCommentVNode("v-if", true),
+              _createElementVNode("span", {
+                class: _normalizeClass({ "crumb-link": i === 0 }),
+                onClick: i === 0 ? ($event => (_ctx.goto(c.path))) : void 0
+              }, _toDisplayString(c.label), 3 /* TEXT, CLASS */, ["onClick"])
+            ], 64 /* STABLE_FRAGMENT */))
+          }), 128 /* KEYED_FRAGMENT */))
         ]),
         _createElementVNode("div", _hoisted_11, [
+          _createVNode(_component_el_tooltip, {
+            content: "刷新页面",
+            placement: "bottom"
+          }, {
+            default: _withCtx(() => [
+              _createElementVNode("span", {
+                class: "topbar-icon",
+                onClick: _cache[31] || (_cache[31] = $event => (_ctx.$router.go(0)))
+              }, [
+                _createVNode(_component_el_icon, null, {
+                  default: _withCtx(() => [
+                    _createVNode(_component_Refresh)
+                  ]),
+                  _: 1 /* STABLE */
+                })
+              ])
+            ]),
+            _: 1 /* STABLE */
+          }),
           _createVNode(_component_el_tooltip, {
             content: "授权状态",
             placement: "bottom"
@@ -291,18 +370,18 @@ return function render(_ctx, _cache) {
               _createVNode(_component_el_dropdown_menu, null, {
                 default: _withCtx(() => [
                   _createVNode(_component_el_dropdown_item, {
-                    onClick: _cache[27] || (_cache[27] = $event => (_ctx.switchTheme('light')))
+                    onClick: _cache[27] || (_cache[27] = $event => (_ctx.switchTheme('lightgold')))
                   }, {
                     default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
-                      _createElementVNode("b", { style: {"color":"var(--accent)"} }, "亮色 · 现代专业", -1 /* CACHED */)
+                      _createElementVNode("b", { style: {"color":"var(--accent)"} }, "白金 · 明亮轻奢", -1 /* CACHED */)
                     ]))]),
                     _: 1 /* STABLE */
                   }),
                   _createVNode(_component_el_dropdown_item, {
-                    onClick: _cache[1] || (_cache[1] = $event => (_ctx.switchTheme('blackgold')))
+                    onClick: _cache[29] || (_cache[29] = $event => (_ctx.switchTheme('light')))
                   }, {
-                    default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
-                      _createElementVNode("b", { class: "gold-text" }, "黑金 · 奢华暗金", -1 /* CACHED */)
+                    default: _withCtx(() => [...(_cache[30] || (_cache[30] = [
+                      _createElementVNode("b", { style: {"color":"var(--accent)"} }, "亮色 · 现代专业", -1 /* CACHED */)
                     ]))]),
                     _: 1 /* STABLE */
                   }),
@@ -311,14 +390,6 @@ return function render(_ctx, _cache) {
                   }, {
                     default: _withCtx(() => [...(_cache[15] || (_cache[15] = [
                       _createElementVNode("b", { style: {"color":"var(--accent-light)"} }, "银黑 · 冷冽曜银", -1 /* CACHED */)
-                    ]))]),
-                    _: 1 /* STABLE */
-                  }),
-                  _createVNode(_component_el_dropdown_item, {
-                    onClick: _cache[25] || (_cache[25] = $event => (_ctx.switchTheme('lightgold')))
-                  }, {
-                    default: _withCtx(() => [...(_cache[26] || (_cache[26] = [
-                      _createElementVNode("b", { style: {"color":"var(--accent)"} }, "白金 · 明亮轻奢", -1 /* CACHED */)
                     ]))]),
                     _: 1 /* STABLE */
                   })
@@ -334,7 +405,7 @@ return function render(_ctx, _cache) {
                   ]),
                   _: 1 /* STABLE */
                 }),
-                _createTextVNode(" " + _toDisplayString(_ctx.store.theme === 'light' ? '亮色' : _ctx.store.theme === 'blackgold' ? '黑金' : _ctx.store.theme === 'lightgold' ? '白金' : '银黑'), 1 /* TEXT */)
+                _createTextVNode(" " + _toDisplayString(_ctx.store.theme === 'lightgold' ? '白金' : _ctx.store.theme === 'light' ? '亮色' : '银黑'), 1 /* TEXT */)
               ])
             ]),
             _: 1 /* STABLE */
