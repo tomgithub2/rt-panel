@@ -57,10 +57,20 @@ class RTSetup
             }
             if (File.Exists(hta))
             {
-                Process.Start(new ProcessStartInfo("mshta.exe", "\"" + hta + "\"") { UseShellExecute = true });
-                return;
+                try
+                {
+                    Process p = Process.Start(new ProcessStartInfo("mshta.exe", "\"" + hta + "\"") { UseShellExecute = true });
+                    if (p != null) return;
+                    throw new Exception("mshta 返回空进程");
+                }
+                catch (Exception ex)
+                {
+                    // 向导起不来（组策略禁用 mshta 之类）时退回可见窗口的命令行安装，
+                    // 至少让用户看到进度与报错，而不是"双击没反应"
+                    BootLog("图形向导启动失败，改用命令行安装：" + ex.Message);
+                }
             }
-            // 回退：没有 HTA 时直接静默安装
+            // 回退：命令行安装（可见窗口）
             if (File.Exists(ps))
             {
                 Process.Start(new ProcessStartInfo("powershell.exe",
@@ -73,6 +83,17 @@ class RTSetup
         {
             Report(ex, exePath);
         }
+    }
+
+    // 启动阶段的留痕（winexe 没有控制台）：向导启动失败等都要写下来
+    static void BootLog(string msg)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(Path.GetTempPath(), "rt-setup-boot.txt"),
+                DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  " + msg + "\r\n", Encoding.UTF8);
+        }
+        catch { }
     }
 
     static string CurrentExePath()

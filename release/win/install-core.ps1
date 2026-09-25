@@ -38,14 +38,11 @@ function Fail($msg) {
     exit 1
 }
 
-# 应用商店的 python.exe 是个占位壳：能被 Get-Command 找到，但跑不了脚本，
-# 只按"命令存在"判断会一路装依赖失败，所以必须实跑一次拿版本号才算数。
+# Python 检测：必须实跑一次拿版本号才算数（只判断"命令存在"会把商店占位壳也算通过）。
+# 注意：不能按路径里有没有 WindowsApps 一刀切跳过 —— 微软商店版 Python 就装在那里，
+# 但它自带 pip、完全可用（实测 3.13 + pip 26），跳过它等于人为判定"没有 Python"。
 function Test-Python($exe) {
     if (-not $exe) { return $null }
-    if ($exe -like '*\WindowsApps\*') {
-        Log "跳过应用商店占位程序: $exe"
-        return $null
-    }
     try {
         $out = & $exe -c "import sys;print('%d.%d' % sys.version_info[:2])" 2>$null
     } catch {
@@ -55,6 +52,21 @@ function Test-Python($exe) {
     $v = ("$out").Trim()
     if ($v -notmatch '^\d+\.\d+$') { return $null }
     return $v
+}
+
+# 取可直接执行的解释器路径：商店版 python 是"应用执行别名"（0 字节跳转），
+# sys.executable 指向的 Program Files\WindowsApps 真实路径普通权限会被拒（实测 Access denied），
+# 所以要先真跑一次确认，跑不通就保留能用的别名路径。
+function Resolve-PythonReal($exe) {
+    try {
+        $real = (& $exe -c "import sys;print(sys.executable)" 2>$null | Select-Object -First 1)
+        $real = ("$real").Trim()
+        if ($real -and (Test-Path $real) -and ($real -ne $exe)) {
+            & $real -c "import sys" 2>$null | Out-Null
+            if ($LASTEXITCODE -eq 0) { return $real }
+        }
+    } catch { }
+    return $exe
 }
 
 # 端口校验：无效则回退默认 8000（必须放在 Log 定义之后，否则日志函数还不存在）
@@ -163,6 +175,22 @@ if ($pyVer -match '^(\d+)\.(\d+)$') {
     }
 }
 
+# 解析真实解释器路径（商店版别名在 SYSTEM 计划任务里可能解析不了），并确认 pip 可用
+$pyReal = Resolve-PythonReal $pyCmd
+if ($pyReal -and $pyReal -ne $pyCmd) {
+    Log "已解析真实解释器路径: $pyReal"
+    $pyCmd = $pyReal
+}
+& $pyCmd -m pip --version 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+    Log '未检测到 pip，尝试自举（ensurepip）…'
+    & $pyCmd -m ensurepip --upgrade 2>&1 | Out-Null
+    & $pyCmd -m pip --version 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Fail 'Python 缺少 pip：请安装官方版 Python（https://www.python.org/downloads/，勾选 Add Python to PATH）后重试'
+    }
+}
+
 # ---------- 5. 安装面板依赖 ----------
 Log '检查面板依赖…'
 $depsDir = Join-Path $backendDir '.deps'
@@ -224,7 +252,9 @@ $launcherText = (@(
     'chcp 65001 >nul',
     'title RT Panel',
     'cd /d "' + $backendDir + '"',
-    '"' + $pyCmd + '" run.py >> "data\panel.log" 2>&1'
+    'set "PY=' + $pyCmd + '"',
+    'if not exist "%PY%" set "PY=python"',
+    '"%PY%" run.py >> "data\panel.log" 2>&1'
 ) -join "`r`n") + "`r`n"
 [System.IO.File]::WriteAllText($launcher, $launcherText, $encNoBom)
 
