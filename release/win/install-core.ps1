@@ -228,7 +228,7 @@ $launcherText = (@(
 ) -join "`r`n") + "`r`n"
 [System.IO.File]::WriteAllText($launcher, $launcherText, $encNoBom)
 
-# rt 命令行管理工具（类宝塔 bt 命令）
+# rt 命令行管理工具
 $rtSrc = Join-Path $PSScriptRoot 'rt.cmd'
 if (Test-Path $rtSrc) {
     Copy-Item -Path $rtSrc -Destination (Join-Path $InstallDir 'rt.cmd') -Force
