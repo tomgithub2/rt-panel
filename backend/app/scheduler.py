@@ -415,7 +415,8 @@ def start():
     if not cfg.get('initialized'):
         save_config({'initialized': True})
     loops = [_sample_loop, _aggregate_loop, _alert_loop, _cron_loop, _ssl_renew_loop,
-             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop, _waf_crowd_loop]
+             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop, _waf_crowd_loop,
+             _waf_telemetry_loop]
     for fn in loops:
         t = threading.Thread(target=fn, daemon=True, name=f'ops-{fn.__name__}')
         t.start()
@@ -444,6 +445,25 @@ def _waf_crowd_loop():
         try:
             from .waf_crowd import poll_once
             poll_once()
+        except Exception:
+            pass
+
+
+def _waf_telemetry_loop():
+    """多机遥测：开关开启时，每 60 分钟借用其他机器测一次本机站点（关闭则完全不动）。"""
+    while not _stop.is_set():
+        _stop.wait(600)
+        if _stop.is_set():
+            break
+        try:
+            cfg = get_config()
+            if not cfg.get('waf_telemetry'):
+                continue
+            from .waf_crowd import telemetry_last, telemetry_run
+            last = telemetry_last()
+            if time.time() - float(last.get('ts') or 0) < 3600:
+                continue
+            telemetry_run()
         except Exception:
             pass
 

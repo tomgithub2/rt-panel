@@ -31,6 +31,7 @@ DEFAULTS = {
     'language': 'zh-CN',
     'theme': 'lightgold',
     'waf_crowd': True,
+    'waf_telemetry': False,
     'session_hours': 24,
     'max_login_fails': 5,
     'lock_minutes': 10,
