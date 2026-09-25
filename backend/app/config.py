@@ -89,4 +89,4 @@ def get_jwt_secret() -> str:
             return f.read().strip()
 
 
-PANEL_VERSION = '1.0.0'
+PANEL_VERSION = '2.0.0-rc1'

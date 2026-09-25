@@ -17,7 +17,7 @@ set -e
 
 PANEL_NAME="RT面板"
 INSTALL_DIR="/opt/rt-panel"
-VERSION="1.0.0"
+VERSION="2.0.0-rc1"
 # ★ 发布前修改：安装验证码（官网下载页的命令需与之一致）
 INSTALL_CODE="${RT_INSTALL_CODE:-rtpanel2025}"
 # ★ 发布前修改：安装包下载地址（你的官网域名）
