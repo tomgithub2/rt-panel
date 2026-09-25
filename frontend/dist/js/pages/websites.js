@@ -1,6 +1,6 @@
 // Created by 小杜 on 2026/08
 
-// 网站管理 · 一键建站（超越宝塔：同建数据库 + FTP + 凭据一次性展示）
+// 网站管理 · 一键建站（同建数据库 + FTP + 凭据一次性展示）
 import api from '../api.js'
 import { fmtTime, hasPerm } from '../util.js'
 
@@ -53,7 +53,7 @@ export default {
       } catch (e) {}
     },
     async openCreate() {
-      // 打开前检测环境：MySQL/FTP 未安装则对应选项置灰（宝塔式智能选项）
+      // 打开前检测环境：MySQL/FTP 未安装则对应选项置灰
       try { this.env = await api.get('/websites/env') } catch (e) {}
       this.form = { show: true, domain: '', type: 'static', port: 80, root: '',
                     target: '', with_db: this.env.mysql !== false, db_name: '',
@@ -551,7 +551,7 @@ return function render(_ctx, _cache) {
     _createVNode(_component_el_dialog, {
       modelValue: _ctx.appsDialog.show,
       "onUpdate:modelValue": _cache[69] || (_cache[69] = $event => ((_ctx.appsDialog.show) = $event)),
-      title: "一键部署应用（宝塔式）",
+      title: "一键部署应用",
       width: "560px",
       "close-on-click-modal": false
     }, {
@@ -934,7 +934,7 @@ return function render(_ctx, _cache) {
                 ]),
                 _: 1 /* STABLE */
               }),
-              _cache[21] || (_cache[21] = _createTextVNode(" 一键附加服务（可选，超越宝塔的一站式创建）", -1 /* CACHED */))
+              _cache[21] || (_cache[21] = _createTextVNode(" 一键附加服务（可选，一站附带创建）", -1 /* CACHED */))
             ]),
             _createElementVNode("div", {
               class: _normalizeClass(["site-addon", { on: _ctx.form.with_db }])

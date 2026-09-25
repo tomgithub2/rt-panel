@@ -17,7 +17,7 @@ router = APIRouter(prefix='/api/websites', tags=['websites'],
                    dependencies=[Depends(require_feature('websites'))])
 
 
-# 宝塔式一键部署应用目录（官方稳定下载源，URL 固定不可由用户输入）
+# 一键部署应用目录（官方稳定下载源，URL 固定不可由用户输入）
 SITE_APPS = {
     'wordpress': {'name': 'WordPress', 'desc': '全球最流行的博客与建站程序（需 PHP+MySQL）',
                   'url': 'https://wordpress.org/latest.zip', 'kind': 'zip',
@@ -167,7 +167,7 @@ font-family:system-ui;background:#0f1420;color:#dfe6f5}}h1{{font-weight:500}}
 span{{color:#409eff}}</style></head><body><h1>欢迎访问 <span>{domain}</span></h1>
 <p style="position:fixed;bottom:16px;color:#5b6b85">由 RT面板 运维面板托管</p></body></html>''')
     target = _safe_proxy_target(body.get('target', '')) if stype == 'proxy' else ''
-    # 一键建站（超越宝塔）：可选同时创建同名 MySQL 数据库 + FTP 账号
+    # 一键建站：可选同时创建同名 MySQL 数据库 + FTP 账号
     db_info = None
     if body.get('with_db'):
         db_info = _auto_create_db(domain, body.get('db_name', ''))
@@ -184,7 +184,7 @@ span{{color:#409eff}}</style></head><body><h1>欢迎访问 <span>{domain}</span>
     return {'id': sid, 'db': db_info, 'ftp': ftp_info}
 
 
-# ---------------------------------------------------------------- 宝塔式一键部署
+# ---------------------------------------------------------------- 一键部署
 @router.get('/apps')
 def site_apps(user: dict = Depends(require_perm('websites:view'))):
     return {'apps': [{'key': k, **v} for k, v in SITE_APPS.items()]}
@@ -193,7 +193,7 @@ def site_apps(user: dict = Depends(require_perm('websites:view'))):
 @router.post('/deploy-app')
 def site_deploy_app(body: dict, request: Request,
                     user: dict = Depends(require_perm('websites:manage'))):
-    """宝塔式一键部署：选程序 → 填域名 → 自动下载/安全解压/建站/建库/建 FTP。"""
+    """一键部署：选程序 → 填域名 → 自动下载/安全解压/建站/建库/建 FTP。"""
     import urllib.request as _urllib
     from .files import _extract_tar_safely, _extract_zip_safely
     domain = str(body.get('domain', '')).strip().lower()
@@ -274,7 +274,7 @@ def site_deploy_app(body: dict, request: Request,
                    + ('' if php_sock else '（未检测到 PHP-FPM，PHP 暂不可解析：请先安装 PHP）')}
 
 
-# ---------------------------------------------------------------- 网站备份（宝塔式一键备份）
+# ---------------------------------------------------------------- 网站备份（一键备份）
 @router.get('/backups')
 def site_backups(user: dict = Depends(require_perm('websites:view'))):
     backup_dir = os.path.join(BACKUP_DIR, 'websites')
@@ -470,7 +470,7 @@ def site_logs(sid: int, type: str = 'access', lines: int = 200,
 
 @router.get('/{sid}/stats')
 def site_stats(sid: int, user: dict = Depends(require_perm('websites:view'))):
-    """宝塔式流量统计：今日 PV/UV/流量 + 近 7 天趋势 + 今日 TOP 访问。"""
+    """流量统计：今日 PV/UV/流量 + 近 7 天趋势 + 今日 TOP 访问。"""
     import datetime as _dt
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
     if not site:
@@ -610,7 +610,7 @@ def site_put_settings(sid: int, body: dict, request: Request,
     auth_pass = str(body.get('auth_pass', ''))
     hotlink = str(body.get('hotlink', '')).strip()[:300]
     custom_pseudo = str(body.get('custom_pseudo', '')).strip()[:500]
-    # 宝塔式：多域名绑定 / 强制 HTTPS / 默认文档
+    # 多域名绑定 / 强制 HTTPS / 默认文档
     domains = str(body.get('domains', '')).strip()[:500]
     force_https = 1 if body.get('force_https') else 0
     index_doc = str(body.get('index_doc', '')).strip()[:200]
@@ -665,11 +665,11 @@ def _render_single(site: dict) -> str:
     waf = render_waf_block()
     domain = site['domain']
     st = query('SELECT * FROM site_settings WHERE site_id=?', (site['id'],), one=True) or {}
-    # 宝塔式：该域名已有有效证书 → 自动生成 443 HTTPS server 块 + 80 自动跳转
+    # 该域名已有有效证书 → 自动生成 443 HTTPS server 块 + 80 自动跳转
     ssl_cert = query("SELECT * FROM ssl_certs WHERE domain=? AND cert_path!='' ORDER BY id DESC",
                      (domain,), one=True)
     has_ssl = bool(ssl_cert and os.path.isfile(ssl_cert['cert_path']))
-    # 宝塔式：多域名绑定
+    # 多域名绑定
     names = [domain]
     for d in (st.get('domains') or '').replace('\n', ' ').split():
         d = d.strip().lower()
@@ -702,7 +702,7 @@ def _render_single(site: dict) -> str:
     index_line = f'    index {index_doc};' if index_doc else '    index index.html index.htm index.php;'
     # PHP 站点：自动探测 PHP-FPM socket（未探测到用默认路径，装了 PHP 后即生效）
     php_upstream = (_php_fpm_sock() or '/run/php/php-fpm.sock')
-    # 宝塔式：站点独立访问/错误日志（目录不存在则跳过，避免 nginx reload 失败）
+    # 站点独立访问/错误日志（目录不存在则跳过，避免 nginx reload 失败）
     log_lines = ''
     log_dir = os.path.dirname(_nginx_log_path('access', domain))
     if os.path.isdir(log_dir):
@@ -752,7 +752,7 @@ def _render_single(site: dict) -> str:
         deny all;
     }}
 }}'''
-    # 宝塔式：域名已部署证书 → 自动追加 443 HTTPS server 块（SSL 整合进网站管理）
+    # 域名已部署证书 → 自动追加 443 HTTPS server 块（SSL 整合进网站管理）
     if has_ssl:
         cert_path = ssl_cert['cert_path'].replace('\\', '/')
         key_path = ssl_cert['key_path'].replace('\\', '/')

@@ -250,7 +250,7 @@ return function render(_ctx, _cache) {
     ]),
     _createElementVNode("div", _hoisted_1, [
       _createElementVNode("div", { class: "card-title" }, [
-        _createTextVNode("Swap 内存交换（宝塔式）"),
+        _createTextVNode("Swap 内存交换"),
         (_ctx.swap.supported)
           ? (_openBlock(), _createElementBlock("div", {
               key: 0,

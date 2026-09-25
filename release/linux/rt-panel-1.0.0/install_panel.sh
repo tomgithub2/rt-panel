@@ -201,7 +201,7 @@ fi
 step "部署面板文件"
 mkdir -p "$INSTALL_DIR"
 cp -rf "$PANEL_SRC/." "$INSTALL_DIR/"
-# 安装 rt 命令行管理工具（类宝塔 bt 命令：rt status/restart/port/entrance/ssl 等）
+# 安装 rt 命令行管理工具（rt status/restart/port/entrance/ssl 等）
 if [ -f "$INSTALL_DIR/backend/rt.sh" ]; then
     cp -f "$INSTALL_DIR/backend/rt.sh" /usr/bin/rt
     chmod +x /usr/bin/rt

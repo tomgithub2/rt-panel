@@ -25,7 +25,7 @@ export default {
   methods: {
     hasPerm,
     sendQuick(cmd) {
-      // 快捷命令：写入终端并回车执行（宝塔式快捷操作）
+      // 快捷命令：写入终端并回车执行
       if (this.ws && this.ws.readyState === 1) {
         this.ws.send(JSON.stringify({ type: 'in', data: cmd + '\r' }))
         this.term.focus()

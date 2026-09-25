@@ -342,7 +342,7 @@ return function render(_ctx, _cache) {
                       value: "shell"
                     }),
                     _createVNode(_component_el_option, {
-                      label: "URL 访问（宝塔式：定时访问网址）",
+                      label: "URL 访问（定时访问网址）",
                       value: "url"
                     })
                   ]),

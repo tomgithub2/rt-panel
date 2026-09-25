@@ -60,7 +60,7 @@ def run(body: dict, request: Request, user: dict = Depends(require_perm('system:
     return {'code': runRst['code'], 'output': (runRst['stdout'] + runRst['stderr'])[-_OUT_CAP:]}
 
 
-# ---------------------------------------------------------------- Swap 管理（宝塔式）
+# ---------------------------------------------------------------- Swap 管理
 @router.get('/swap')
 def swap_status(user: dict = Depends(require_perm('system:view'))):
     """Linux Swap 状态 / Windows 页面文件。"""
@@ -87,7 +87,7 @@ def _swap_files() -> list:
 
 @router.post('/swap')
 def swap_create(body: dict, request: Request, user: dict = Depends(require_perm('system:manage'))):
-    """创建 Swap 文件（宝塔式：大小 MB + swappiness）。"""
+    """创建 Swap 文件（大小 MB + swappiness）。"""
     if IS_WIN:
         raise HTTPException(status_code=400, detail='Windows 无需手动创建 Swap')
     size_mb = int(body.get('size_mb', 1024))

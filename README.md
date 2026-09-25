@@ -17,7 +17,7 @@
 
 ## 📖 简介 Introduction
 
-RT面板是一款**完全自研**的跨平台服务器运维面板，功能对标并超越同类产品，支持 Windows 与 Linux 双平台，提供白金 / 亮色专业 / 银黑三大主题（默认白金）。
+RT面板是一款**完全自研**的跨平台服务器运维面板，功能覆盖服务器运维全场景，支持 Windows 与 Linux 双平台，提供白金 / 亮色专业 / 银黑三大主题（默认白金）。
 
 RT Panel is a **fully self-developed** cross-platform server operations panel with features that match and exceed similar products. It supports Windows and Linux with three built-in themes (Platinum default / Light-Pro / Silver-Black).
 

@@ -24,7 +24,7 @@ def cron_add(body: dict, request: Request, user: dict = Depends(require_perm('cr
     name = str(body.get('name', '')).strip()
     schedule = str(body.get('schedule', '')).strip()
     command = str(body.get('command', '')).strip()
-    # 宝塔式：URL 任务（定时访问网址，如监控保活/触发钩子）
+    # URL 任务（定时访问网址，如监控保活/触发钩子）
     if body.get('type') == 'url':
         if not command.startswith(('http://', 'https://')):
             raise HTTPException(status_code=400, detail='URL 任务地址需以 http(s):// 开头')
