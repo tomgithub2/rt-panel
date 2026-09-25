@@ -6,6 +6,8 @@ export default {
   data() {
     return {
       servers: [], activeKind: 'sqlite', dbs: [], activeDb: '',
+      // 引擎环境探测：没装的引擎给出"一键安装"引导（MySQL/PostgreSQL/Redis）
+      env: { checked: false, list: [] }, installingKey: '',
       tables: [], query: { sql: '', result: null, running: false },
       createForm: { show: false, name: '', charset: 'utf8mb4' },
       tableDialog: { show: false, name: '', tab: 'data', schema: [], data: { cols: [], rows: [], total: 0 }, limit: 100 },
@@ -21,9 +23,53 @@ export default {
       ],
     }
   },
-  mounted() { this.loadServers() },
+  mounted() { this.checkEnv(); this.loadServers() },
   methods: {
     fmtTime, hasPerm,
+    async checkEnv() {
+      try {
+        const r = await api.get('/env', { params: { keys: 'mysql,postgresql,redis' } })
+        this.env = { checked: true, list: r.list || [] }
+      } catch (e) {
+        this.env = { checked: true, list: [] }
+      }
+    },
+    async installEngine(key) {
+      this.installingKey = key
+      try {
+        await api.post('/env/install', { key })
+        ElMessage.success('安装任务已启动，完成后自动刷新（数分钟，请勿关闭面板）')
+        const timer = setInterval(async () => {
+          try {
+            const r = await api.get('/software/install-status')
+            const rec = (r.list || []).find((x) => x.name === key && x.action === 'install')
+            if (!rec) return
+            clearInterval(timer)
+            this.installingKey = ''
+            if (rec.exit_code === 0) {
+              ElMessage.success('安装完成')
+              this.checkEnv(); this.loadServers()
+            } else {
+              ElMessage.warning('安装结束（退出码 ' + rec.exit_code + '），可到 软件商店 查看输出')
+            }
+          } catch (e) {}
+        }, 5000)
+      } catch (e) { this.installingKey = '' }
+    },
+    async startEngine(name) {
+      if (!name) return
+      try {
+        await api.post('/services/action', { name, action: 'start' })
+        ElMessage.success('已请求启动 ' + name + ' 服务')
+        setTimeout(() => this.checkEnv(), 4000)
+      } catch (e) {}
+    },
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text || '')
+        ElMessage.success('已复制')
+      } catch (e) { ElMessage.warning('复制失败，请手动选中') }
+    },
     async loadServers() {
       try {
         this.servers = (await api.get('/databases/servers')).list
@@ -100,7 +146,7 @@ export default {
       } catch (e) {}
     },
   },
-  render: (function(){ const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock } = Vue
+  render: (function(){ const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass } = Vue
 
 const _hoisted_1 = { class: "op-page" }
 const _hoisted_2 = { class: "op-card" }
@@ -159,6 +205,65 @@ return function render(_ctx, _cache) {
   const _component_el_tabs = _resolveComponent("el-tabs")
 
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
+    (_ctx.env.checked && _ctx.env.list.length)
+      ? (_openBlock(), _createElementBlock("div", {
+          key: 100,
+          class: "op-card env-gate is-list"
+        }, [
+          _createElementVNode("div", { class: "env-gate-head" }, [
+            _createElementVNode("div", { class: "env-gate-title" }, "数据库引擎", -1 /* CACHED */),
+            _createElementVNode("div", { class: "env-gate-desc" }, "没装的引擎点「一键安装」即可（与宝塔一样：装好才能用对应的管理与连接功能）；SQLite 为面板内置，无需安装。", -1 /* CACHED */)
+          ]),
+          _createElementVNode("div", { class: "env-rows" }, [
+            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.env.list, (e) => {
+              return (_openBlock(), _createElementBlock("div", {
+                class: _normalizeClass(["env-row", { 'is-off': !e.installed }]),
+                key: e.key
+              }, [
+                _createElementVNode("span", { class: "env-row-dot" }, null, -1 /* CACHED */),
+                _createElementVNode("div", { class: "env-row-main" }, [
+                  _createElementVNode("div", { class: "env-row-name" }, [
+                    _createTextVNode(_toDisplayString(e.name) + " ", 1 /* TEXT */),
+                    (e.version)
+                      ? (_openBlock(), _createElementBlock("span", { key: 0, class: "env-row-ver" }, _toDisplayString(e.version), 1 /* TEXT */))
+                      : _createCommentVNode("v-if", true)
+                  ]),
+                  _createElementVNode("div", { class: "env-row-desc" }, _toDisplayString(e.installed
+                    ? (e.running ? '运行中，可直接管理' : '已安装，但服务未运行')
+                    : '未安装'), 1 /* TEXT */)
+                ]),
+                _createElementVNode("div", { class: "env-row-actions" }, [
+                  (!e.installed && e.installable)
+                    ? (_openBlock(), _createElementBlock("button", {
+                        key: 0,
+                        class: "gate-btn primary",
+                        disabled: _ctx.installingKey === e.key,
+                        onClick: $event => (_ctx.installEngine(e.key))
+                      }, _toDisplayString(_ctx.installingKey === e.key ? '安装中…' : '一键安装'), 9 /* TEXT, PROPS */, ["disabled", "onClick"]))
+                    : _createCommentVNode("v-if", true),
+                  (e.installed && !e.running)
+                    ? (_openBlock(), _createElementBlock("button", {
+                        key: 1,
+                        class: "gate-btn primary",
+                        onClick: $event => (_ctx.startEngine(e.service))
+                      }, " 启动服务 ", 8 /* PROPS */, ["onClick"]))
+                    : _createCommentVNode("v-if", true),
+                  (!e.installed && !e.installable)
+                    ? (_openBlock(), _createElementBlock("button", {
+                        key: 2,
+                        class: "gate-btn",
+                        onClick: $event => (_ctx.copyText(e.manual || e.command))
+                      }, " 复制安装指引 ", 8 /* PROPS */, ["onClick"]))
+                    : _createCommentVNode("v-if", true),
+                  (e.installed && e.running)
+                    ? (_openBlock(), _createElementBlock("span", { key: 3, class: "env-row-ok" }, " 已就绪 ", -1 /* CACHED */))
+                    : _createCommentVNode("v-if", true)
+                ])
+              ], 2 /* CLASS */))
+            }), 128 /* KEYED_FRAGMENT */))
+          ])
+        ]))
+      : _createCommentVNode("v-if", true),
     _createElementVNode("div", _hoisted_2, [
       _cache[13] || (_cache[13] = _createElementVNode("div", { class: "card-title" }, "数据库服务器", -1 /* CACHED */)),
       _createElementVNode("div", _hoisted_3, [

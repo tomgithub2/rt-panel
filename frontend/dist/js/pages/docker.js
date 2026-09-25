@@ -12,15 +12,73 @@ export default {
       createForm: { show: false, image: '', name: '', ports: [''], env: [''], volumes: [''], network: '', restart: 'unless-stopped', command: '' },
       logsDialog: { show: false, cid: '', logs: '' },
       installing: false, installMsg: '', installPollTimer: null,
+      // 运行环境探测：docker 没装/没启动时先把页面让给"安装引导"
+      env: { checked: false, installed: false, running: false, installable: false,
+             command: '', manual: '', platform: '', version: '' },
     }
   },
-  mounted() { this.load() },
+  mounted() { this.checkEnv() },
   beforeUnmount() { clearInterval(this.installPollTimer) },
   computed: {
     dockerMissing() { return !this.status && this.error },
   },
   methods: {
     fmtBytes, hasPerm,
+    async checkEnv() {
+      try {
+        const r = await api.get('/env', { params: { keys: 'docker' } })
+        const d = (r.list || [])[0] || {}
+        this.env = { checked: true, installed: !!d.installed, running: !!d.running,
+                     installable: !!d.installable, command: d.command || '',
+                     manual: d.manual || '', platform: r.platform || '',
+                     version: d.version || '' }
+      } catch (e) {
+        this.env = { checked: true, installed: false, running: false, installable: false,
+                     command: '', manual: '', platform: '', version: '' }
+      }
+      if (this.env.installed && this.env.running) this.load()
+      else if (this.env.installed && !this.env.running) this.error = 'Docker 已安装但服务未运行'
+      else this.error = '未检测到 Docker'
+    },
+    async startDocker() {
+      try {
+        await api.post('/services/action', { name: 'docker', action: 'start' })
+        ElMessage.success('已请求启动 Docker 服务，稍后自动复检')
+        setTimeout(() => this.checkEnv(), 4000)
+      } catch (e) {}
+    },
+    async installEnv() {
+      try {
+        this.installing = true
+        this.installMsg = '安装任务已提交，正在安装（数分钟，请勿关闭面板）…'
+        await api.post('/env/install', { key: 'docker' })
+        clearInterval(this.installPollTimer)
+        this.installPollTimer = setInterval(async () => {
+          try {
+            const r = await api.get('/software/install-status')
+            const rec = (r.list || []).find((x) => x.name === 'docker' && x.action === 'install')
+            if (!rec) return
+            this.installing = false
+            if (rec.exit_code === 0) {
+              this.installMsg = '安装完成，正在启动 Docker 服务…'
+              clearInterval(this.installPollTimer)
+              try { await api.post('/services/action', { name: 'docker', action: 'start' }) } catch (e) {}
+              setTimeout(() => this.checkEnv(), 5000)
+            } else {
+              this.installMsg = '安装结束（退出码 ' + rec.exit_code + '），请查看下方输出'
+              ElMessage.warning(this.installMsg)
+              clearInterval(this.installPollTimer)
+            }
+          } catch (e) {}
+        }, 5000)
+      } catch (e) { this.installing = false }
+    },
+    async copyText(text) {
+      try {
+        await navigator.clipboard.writeText(text)
+        ElMessage.success('已复制')
+      } catch (e) { ElMessage.warning('复制失败，请手动选中') }
+    },
     async load() {
       this.error = ''
       try {
@@ -169,6 +227,53 @@ return function render(_ctx, _cache) {
   const _component_el_dialog = _resolveComponent("el-dialog")
 
   return (_openBlock(), _createElementBlock("div", _hoisted_1, [
+    (_ctx.env.checked && (!_ctx.env.installed || !_ctx.env.running))
+      ? (_openBlock(), _createElementBlock("div", {
+          key: 100,
+          class: "op-card env-gate"
+        }, [
+          _createElementVNode("div", { class: "env-gate-icon" }, _toDisplayString(_ctx.env.installed ? '!' : 'D'), 1 /* TEXT */),
+          _createElementVNode("div", { class: "env-gate-main" }, [
+            _createElementVNode("div", { class: "env-gate-title" }, _toDisplayString(_ctx.env.installed ? 'Docker 已安装，但服务没有运行' : '未检测到 Docker 环境'), 1 /* TEXT */),
+            _createElementVNode("div", { class: "env-gate-desc" }, _toDisplayString(_ctx.env.installed
+              ? '容器管理需要 Docker 服务处于运行状态。点击右侧「启动 Docker 服务」，或到 系统服务 里手动启动。'
+              : '容器 / 镜像 / 网络 / 数据卷管理都依赖 Docker。装好 Docker 后本页会自动切换成管理界面。'), 1 /* TEXT */),
+            (_ctx.env.command)
+              ? (_openBlock(), _createElementBlock("div", { key: 0, class: "env-gate-cmd" }, [
+                  _createElementVNode("code", null, _toDisplayString(_ctx.env.command), 1 /* TEXT */),
+                  _createElementVNode("span", {
+                    class: "env-gate-copy",
+                    onClick: $event => (_ctx.copyText(_ctx.env.command))
+                  }, "复制", 8 /* PROPS */, ["onClick"])
+                ]))
+              : _createCommentVNode("v-if", true),
+            (_ctx.env.manual)
+              ? (_openBlock(), _createElementBlock("div", { key: 1, class: "env-gate-manual" }, _toDisplayString(_ctx.env.manual), 1 /* TEXT */))
+              : _createCommentVNode("v-if", true),
+            (_ctx.installMsg)
+              ? (_openBlock(), _createElementBlock("div", { key: 2, class: "env-gate-msg" }, _toDisplayString(_ctx.installMsg), 1 /* TEXT */))
+              : _createCommentVNode("v-if", true)
+          ]),
+          _createElementVNode("div", { class: "env-gate-actions" }, [
+            (!_ctx.env.installed)
+              ? (_openBlock(), _createElementBlock("button", {
+                  key: 0,
+                  class: "gate-btn primary",
+                  disabled: _ctx.installing,
+                  onClick: _ctx.installEnv
+                }, _toDisplayString(_ctx.installing ? '安装中…' : '一键安装 Docker'), 9 /* TEXT, PROPS */, ["disabled", "onClick"]))
+              : (_openBlock(), _createElementBlock("button", {
+                  key: 1,
+                  class: "gate-btn primary",
+                  onClick: _ctx.startDocker
+                }, " 启动 Docker 服务 ", 8 /* PROPS */, ["onClick"])),
+            _createElementVNode("button", {
+              class: "gate-btn",
+              onClick: _ctx.checkEnv
+            }, " 重新检测 ", 8 /* PROPS */, ["onClick"])
+          ])
+        ]))
+      : _createCommentVNode("v-if", true),
     (_ctx.status)
       ? (_openBlock(), _createElementBlock("div", _hoisted_2, [
           _createElementVNode("div", _hoisted_3, [
