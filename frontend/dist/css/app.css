@@ -631,3 +631,172 @@ body, .op-sidebar, .op-topbar, .op-card, .stat-card, .el-table, .menu-item {
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: content-box; }
 ::selection { background: var(--accent-soft); }
+
+/* ============================================================
+   高定质感 v4：渐变描边环 / 多层投影 / 金属质感 / 玻璃与微动效
+   ============================================================ */
+:root {
+  --premium-shadow: 0 1px 2px rgba(60, 45, 10, .05), 0 10px 30px -14px rgba(60, 45, 10, .26);
+  --premium-shadow-lg: 0 2px 6px rgba(60, 45, 10, .06), 0 22px 50px -20px rgba(60, 45, 10, .34);
+  --premium-ring: color-mix(in srgb, var(--accent) 46%, transparent);
+  --premium-highlight: rgba(255, 255, 255, .55);
+}
+:root[data-theme='silverblack'] {
+  --premium-shadow: 0 1px 2px rgba(0, 0, 0, .5), 0 12px 34px -16px rgba(0, 0, 0, .7);
+  --premium-shadow-lg: 0 2px 8px rgba(0, 0, 0, .55), 0 26px 60px -22px rgba(0, 0, 0, .8);
+  --premium-ring: color-mix(in srgb, var(--accent) 58%, transparent);
+  --premium-highlight: rgba(255, 255, 255, .07);
+}
+
+/* ---------- 应用底色：叠层光斑 + 极淡网格 ---------- */
+.op-layout {
+  background:
+    radial-gradient(880px 520px at 88% -12%, var(--accent-soft), transparent 62%),
+    radial-gradient(700px 480px at -8% 108%, var(--accent-soft), transparent 58%),
+    linear-gradient(180deg, var(--bg-base), var(--bg-deep));
+}
+.op-content {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--border) 20%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--border) 20%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px, 32px 32px;
+  background-position: -1px -1px, -1px -1px;
+}
+
+/* ---------- 卡片：渐变描边环 + 多层投影 + 顶部高光 ---------- */
+.op-card {
+  background: var(--bg-card);
+  box-shadow: var(--premium-shadow);
+  transition: box-shadow .28s, transform .28s, border-color .28s;
+}
+.op-card:not(.stat-card) { position: relative; }
+.op-card:not(.stat-card)::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; padding: 1px;
+  background: linear-gradient(155deg, var(--premium-ring), transparent 34%, transparent 66%,
+              color-mix(in srgb, var(--accent) 28%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none; opacity: .75; transition: opacity .28s;
+}
+.op-card:hover { box-shadow: var(--premium-shadow-lg); }
+.op-card:hover:not(.stat-card)::before { opacity: 1; }
+.op-card:hover:not(.stat-card) { transform: translateY(-1px); }
+
+/* KPI 卡：去掉网点，改柔光顶高光 + 更强的数字排版 */
+.stat-card {
+  position: relative; overflow: hidden;
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
+}
+.stat-card::before {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 8%, transparent), transparent 46%);
+}
+.stat-card .stat-icon {
+  background: var(--accent-grad-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: transform .24s, box-shadow .24s;
+}
+.stat-card:hover .stat-icon { transform: translateY(-1px) scale(1.04); box-shadow: var(--shadow-glow); }
+.stat-card .stat-num {
+  font-size: 30px; letter-spacing: -.6px;
+  font-feature-settings: 'tnum' 1, 'lnum' 1;
+}
+.stat-head {
+  font-size: 11.5px; letter-spacing: 1px; text-transform: uppercase; font-weight: 600;
+}
+
+/* ---------- 侧栏：渐变洗色 + 分组细线 + 活跃发光 ---------- */
+.op-sidebar {
+  background:
+    linear-gradient(180deg, var(--accent-grad-soft) 0%, transparent 18%),
+    linear-gradient(180deg, var(--bg-sidebar), var(--bg-base));
+  box-shadow: inset -1px 0 0 var(--border);
+}
+.op-menu .menu-group-title {
+  margin: 14px 0 4px; font-weight: 700; opacity: .7;
+  border-top: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  padding-top: 10px;
+}
+.op-menu .menu-item { border-radius: 11px; }
+.op-menu .menu-item.active {
+  background: linear-gradient(90deg, var(--accent-soft), transparent 85%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
+}
+.op-menu .menu-item.active::before { box-shadow: 0 0 10px var(--accent-glow); }
+.op-menu .menu-item:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+
+/* ---------- 顶栏：玻璃 + 渐变细线 + 图标微光 ---------- */
+.op-topbar {
+  background: var(--bg-glass);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(14px) saturate(1.1);
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--border) 60%, transparent),
+              0 8px 24px -18px rgba(60, 45, 10, .35);
+}
+.topbar-icon:hover, .topbar-toggle:hover { box-shadow: var(--shadow-glow); }
+.license-chip { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent); }
+.license-chip::before { animation: rt-pulse 2.6s ease-in-out infinite; }
+@keyframes rt-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+
+/* ---------- 表格：表头渐变 + 行悬浮左侧强调 ---------- */
+.el-table th.el-table__cell {
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-input)) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+.el-table__row > td.el-table__cell:first-child { box-shadow: inset 3px 0 0 transparent; transition: box-shadow .2s; }
+.el-table__row:hover > td.el-table__cell:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+/* ---------- 按钮：金属渐变 + 内高光 ---------- */
+.el-button { transition: transform .16s, box-shadow .2s, filter .2s, background .2s; }
+.el-button:active { transform: translateY(1px) scale(.995); }
+.el-button--primary {
+  background-image: var(--accent-grad);
+  box-shadow: 0 1px 2px rgba(60, 45, 10, .18), 0 8px 20px -10px var(--accent-glow),
+              inset 0 1px 0 var(--premium-highlight);
+}
+.el-button--primary:hover { filter: brightness(1.07); box-shadow: 0 2px 4px rgba(60, 45, 10, .2), 0 12px 26px -10px var(--accent-glow), inset 0 1px 0 var(--premium-highlight); }
+.el-button--default {
+  background: linear-gradient(180deg, var(--bg-elevated), var(--bg-input));
+  border-color: var(--border);
+}
+.el-button--default:hover { border-color: var(--border-strong); color: var(--accent); }
+
+/* ---------- 表单：填充底 + 焦点光晕 ---------- */
+.el-input__wrapper, .el-select__wrapper, .el-textarea__inner {
+  background: var(--bg-input);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 75%, transparent);
+  transition: box-shadow .2s, background .2s;
+}
+.el-input__wrapper:hover, .el-select__wrapper:hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.el-input__wrapper.is-focus, .el-select__wrapper.is-focused, .el-textarea__inner:focus {
+  box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent) !important;
+}
+
+/* ---------- 弹窗 / 抽屉 / 消息 ---------- */
+.el-overlay { backdrop-filter: blur(3px); background-color: color-mix(in srgb, var(--bg-deep) 55%, transparent); }
+.el-dialog { box-shadow: var(--premium-shadow-lg); border: 1px solid var(--border); }
+.el-dialog__header { background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card)); }
+.el-message, .el-notification { border-radius: 14px; box-shadow: var(--premium-shadow-lg); }
+.el-popper.is-light { border-radius: 12px; box-shadow: var(--premium-shadow-lg); }
+
+/* ---------- 标签页 / 徽标 / 分页 ---------- */
+.el-tabs__nav-wrap::after { background-color: color-mix(in srgb, var(--border) 55%, transparent); }
+.el-tabs__active-bar { background-image: var(--accent-grad); height: 3px; border-radius: 2px; }
+.el-tag { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 22%, transparent); }
+.el-pagination.is-background .el-pager li.is-active { background-image: var(--accent-grad); box-shadow: 0 4px 12px -6px var(--accent-glow); }
+
+/* ---------- 登录页：玻璃卡 + 光斑 ---------- */
+.login-card {
+  background: var(--bg-glass);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: var(--premium-shadow-lg), inset 0 1px 0 var(--premium-highlight);
+}
+.login-brand .brand-logo { animation: rt-float 6s ease-in-out infinite; }
+@keyframes rt-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .license-chip::before, .login-brand .brand-logo { animation: none; }
+  .op-card, .stat-card, .el-button, .stat-card .stat-icon { transition: none; }
+}
