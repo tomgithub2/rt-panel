@@ -30,6 +30,7 @@ export default {
         site_password: [{ required: true, message: '请输入官网账户密码', trigger: 'blur' }],
       },
       themes: [
+        { key: 'light', label: '亮色', desc: '现代专业' },
         { key: 'blackgold', label: '黑金', desc: '奢华暗金' },
         { key: 'silverblack', label: '银黑', desc: '冷冽曜银' },
         { key: 'lightgold', label: '白金', desc: '明亮轻奢' },

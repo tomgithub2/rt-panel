@@ -107,14 +107,14 @@ export default {
       const data = this.series[metric] || []
       return {
         grid: { left: 50, right: 20, top: 30, bottom: 30 },
-        title: { text: title, left: 10, top: 0, textStyle: { color: 'var(--text-regular)', fontSize: 13, fontWeight: 500 } },
-        tooltip: { trigger: 'axis', backgroundColor: 'rgba(10,10,14,.9)', borderColor: 'var(--border-strong)',
-                   textStyle: { color: 'var(--text-primary)' },
+        title: { text: title, left: 10, top: 0, textStyle: { color: this.titleHex, fontSize: 13, fontWeight: 500 } },
+        tooltip: { trigger: 'axis', backgroundColor: this.tooltipBg, borderColor: this.tooltipBorder,
+                   textStyle: { color: this.tooltipText },
                    valueFormatter: v => v == null ? '-' : (metric === 'net' ? fmtRate(v) : v + unit) },
-        xAxis: { type: 'time', axisLine: { lineStyle: { color: 'var(--border)' } },
-                 axisLabel: { color: 'var(--text-secondary)', formatter: '{HH}:{mm}' } },
-        yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(128,128,140,.12)' } },
-                 axisLabel: { color: 'var(--text-secondary)', formatter: value => metric === 'net' ? fmtRate(value) : value + unit } },
+        xAxis: { type: 'time', axisLine: { lineStyle: { color: this.axisHex } },
+                 axisLabel: { color: this.labelHex, formatter: '{HH}:{mm}' } },
+        yAxis: { type: 'value', splitLine: { lineStyle: { color: this.splitHex } },
+                 axisLabel: { color: this.labelHex, formatter: value => metric === 'net' ? fmtRate(value) : value + unit } },
         series: metric === 'net' ? [{
           name: '下载', type: 'line', smooth: true, showSymbol: false, data: data.rx,
           lineStyle: { width: 2, color: '#409eff' },
@@ -153,7 +153,16 @@ export default {
     resizeAll() { Object.values(this.charts).forEach(c => c && c.resize()) },
   },
   computed: {
-    accentHex() { return document.documentElement.dataset.theme === 'silverblack' ? '#b9c8dd' : '#d4af37' },
+    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#d4af37' },
+    // echarts 画布吃不了 CSS 变量，以下全部换算成具体色值
+    isLight() { return document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'lightgold' },
+    titleHex() { return this.isLight ? '#49566b' : '#b8b2a3' },
+    axisHex() { return this.isLight ? '#c9d2e0' : '#3a362c' },
+    labelHex() { return this.isLight ? '#8b96a8' : '#7d7869' },
+    splitHex() { return this.isLight ? 'rgba(23,32,48,.06)' : 'rgba(128,128,140,.12)' },
+    tooltipBg() { return this.isLight ? 'rgba(255,255,255,.96)' : 'rgba(10,10,14,.9)' },
+    tooltipText() { return this.isLight ? '#1c2333' : '#ece7db' },
+    tooltipBorder() { return this.isLight ? '#c6d0e0' : '#3a362c' },
   },
   render: (function(){ const { createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives } = Vue
 

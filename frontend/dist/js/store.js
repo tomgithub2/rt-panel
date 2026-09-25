@@ -9,7 +9,7 @@ const store = reactive({
   role: null,
   panel: null,         // 面板信息
   license: null,       // 授权状态
-  theme: localStorage.getItem('ops_theme') || 'blackgold',
+  theme: localStorage.getItem('ops_theme') || 'light',
 })
 
 window.store = store

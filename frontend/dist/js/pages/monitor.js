@@ -28,6 +28,12 @@ export default {
     if (this.chart) this.chart.dispose()
     window.removeEventListener('resize', this.resize)
   },
+  computed: {
+    // 画布图表按主题取具体色值（echarts 不吃 CSS 变量）
+    isLight() { return document.documentElement.dataset.theme === 'light' || document.documentElement.dataset.theme === 'lightgold' },
+    accentHex() { const t = document.documentElement.dataset.theme; return t === 'silverblack' ? '#b9c8dd' : t === 'lightgold' ? '#b8860b' : t === 'light' ? '#2b6bef' : '#d4af37' },
+    splitHex() { return this.isLight ? 'rgba(23,32,48,.08)' : 'rgba(128,128,140,.12)' },
+  },
   methods: {
     fmtBytes, fmtRate, fmtTime, hasPerm,
     async loadHistory() {
@@ -39,18 +45,20 @@ export default {
           const names = { cpu: 'CPU %', mem: '内存 %', net_rx: '下行 B/s', net_tx: '上行 B/s', disk_read: '读 B/s', disk_write: '写 B/s', load1: '负载 1min' }
           this.chart.setOption({
             grid: { left: 70, right: 24, top: 30, bottom: 36 },
-            tooltip: { trigger: 'axis', backgroundColor: 'rgba(10,10,14,.92)', borderColor: 'var(--border-strong)',
+            tooltip: { trigger: 'axis',
+                       backgroundColor: this.isLight ? 'rgba(255,255,255,.96)' : 'rgba(10,10,14,.92)',
+                       borderColor: 'var(--border-strong)',
                        textStyle: { color: 'var(--text-primary)' } },
             xAxis: { type: 'time', axisLine: { lineStyle: { color: 'var(--border)' } },
                      axisLabel: { color: 'var(--text-secondary)' } },
-            yAxis: { type: 'value', splitLine: { lineStyle: { color: 'rgba(128,128,140,.12)' } },
+            yAxis: { type: 'value', splitLine: { lineStyle: { color: this.splitHex } },
                      axisLabel: { color: 'var(--text-secondary)', formatter: v => ['net_rx','net_tx','disk_read','disk_write'].includes(this.metric) ? fmtBytes(v) : v } },
             series: [{
               type: 'line', smooth: true, showSymbol: false, name: names[this.metric],
               data: r.list.map(x => [x.ts * 1000, x.v]),
-              lineStyle: { width: 2, color: 'var(--accent)' },
+              lineStyle: { width: 2, color: this.accentHex },
               areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
-                colorStops: [{ offset: 0, color: 'rgba(212,175,55,.28)' }, { offset: 1, color: 'rgba(212,175,55,.02)' }] } },
+                colorStops: [{ offset: 0, color: this.accentHex + '47' }, { offset: 1, color: this.accentHex + '08' }] } },
             }],
           }, true)
         })

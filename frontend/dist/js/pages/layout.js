@@ -121,7 +121,7 @@ export default {
     },
     switchTheme(key) {
       window.applyTheme(key)
-      ElMessage.success('已切换为' + (key === 'blackgold' ? '黑金' : key === 'lightgold' ? '白金' : '银黑') + '主题')
+      ElMessage.success('已切换为' + (key === 'light' ? '亮色专业' : key === 'blackgold' ? '黑金' : key === 'lightgold' ? '白金' : '银黑') + '主题')
     },
     goto(path) { this.$router.push(path) },
     async logout() {
@@ -291,6 +291,14 @@ return function render(_ctx, _cache) {
               _createVNode(_component_el_dropdown_menu, null, {
                 default: _withCtx(() => [
                   _createVNode(_component_el_dropdown_item, {
+                    onClick: _cache[27] || (_cache[27] = $event => (_ctx.switchTheme('light')))
+                  }, {
+                    default: _withCtx(() => [...(_cache[28] || (_cache[28] = [
+                      _createElementVNode("b", { style: {"color":"var(--accent)"} }, "亮色 · 现代专业", -1 /* CACHED */)
+                    ]))]),
+                    _: 1 /* STABLE */
+                  }),
+                  _createVNode(_component_el_dropdown_item, {
                     onClick: _cache[1] || (_cache[1] = $event => (_ctx.switchTheme('blackgold')))
                   }, {
                     default: _withCtx(() => [...(_cache[14] || (_cache[14] = [
@@ -326,7 +334,7 @@ return function render(_ctx, _cache) {
                   ]),
                   _: 1 /* STABLE */
                 }),
-                _createTextVNode(" " + _toDisplayString(_ctx.store.theme === 'blackgold' ? '黑金' : _ctx.store.theme === 'lightgold' ? '白金' : '银黑'), 1 /* TEXT */)
+                _createTextVNode(" " + _toDisplayString(_ctx.store.theme === 'light' ? '亮色' : _ctx.store.theme === 'blackgold' ? '黑金' : _ctx.store.theme === 'lightgold' ? '白金' : '银黑'), 1 /* TEXT */)
               ])
             ]),
             _: 1 /* STABLE */

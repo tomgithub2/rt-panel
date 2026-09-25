@@ -677,11 +677,11 @@ return function render(_ctx, _cache) {
           ? (_openBlock(), _createElementBlock("div", { key: 1 }, [
               _createElementVNode("div", { style: {"display":"flex","gap":"12px","margin-bottom":"14px"} }, [
                 _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
-                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#d4af37"} }, _toDisplayString(_ctx.statsDialog.data.today.pv), 1 /* TEXT */),
+                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"var(--accent)"} }, _toDisplayString(_ctx.statsDialog.data.today.pv), 1 /* TEXT */),
                   _createElementVNode("div", { style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"4px"} }, "今日访问量 PV", -1 /* CACHED */)
                 ]),
                 _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
-                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#409eff"} }, _toDisplayString(_ctx.statsDialog.data.today.uv), 1 /* TEXT */),
+                  _createElementVNode("div", { style: {"font-size":"22px","font-weight":"700","color":"#8b5cf6"} }, _toDisplayString(_ctx.statsDialog.data.today.uv), 1 /* TEXT */),
                   _createElementVNode("div", { style: {"color":"var(--text-secondary)","font-size":"12px","margin-top":"4px"} }, "今日独立访客 UV", -1 /* CACHED */)
                 ]),
                 _createElementVNode("div", { style: {"flex":"1","background":"var(--bg-input)","border":"1px solid var(--border)","border-radius":"10px","padding":"12px","text-align":"center"} }, [
@@ -696,7 +696,7 @@ return function render(_ctx, _cache) {
                   _createVNode(_component_el_table_column, { label: "访问量" }, {
                     default: _withCtx((s) => [
                       _createElementVNode("div", { style: {"display":"flex","align-items":"center","gap":"8px"} }, [
-                        _createElementVNode("div", { style: {"width":"60px","height":"8px","background":"linear-gradient(90deg,#d4af37,#9a7a22)","border-radius":"4px"} }),
+                        _createElementVNode("div", { style: {"width":"60px","height":"8px","background":"var(--accent-grad)","border-radius":"4px"} }),
                         _createTextVNode(_toDisplayString(s.row.pv), 1 /* TEXT */)
                       ])
                     ])
