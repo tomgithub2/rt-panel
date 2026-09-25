@@ -259,6 +259,31 @@ return function render(_ctx, _cache) {
   const _directive_loading = _resolveDirective("loading")
 
   return _withDirectives((_openBlock(), _createElementBlock("div", null, [
+    (_ctx.data)
+      ? (_openBlock(), _createElementBlock("div", {
+          key: 0,
+          class: "op-card dash-hero"
+        }, [
+          _createElementVNode("div", { class: "hero-main" }, [
+            _createElementVNode("img", {
+              class: "hero-logo",
+              src: "/img/badge.png",
+              alt: "RT"
+            }, null, -1 /* CACHED */),
+            _createElementVNode("div", null, [
+              _createElementVNode("div", { class: "hero-title" }, [
+                _createTextVNode(_toDisplayString(_ctx.data.system.hostname || '本机') + " ", 1 /* TEXT */),
+                _createElementVNode("span", { class: "hero-tag" }, _toDisplayString((_ctx.data.system.system || '') + ' ' + (_ctx.data.system.release || '')), 1 /* TEXT */)
+              ]),
+              _createElementVNode("div", { class: "hero-sub" }, [
+                _createElementVNode("span", null, _toDisplayString((_ctx.data.system.arch || '') + ' / ' + (_ctx.data.cpu.cores || 0) + ' 核 ' + (_ctx.data.cpu.threads || 0) + ' 线程'), 1 /* TEXT */),
+                _createElementVNode("span", null, _toDisplayString('Python ' + (_ctx.data.system.python || '')), 1 /* TEXT */),
+                _createElementVNode("span", null, _toDisplayString('已运行 ' + _ctx.fmtUptime(_ctx.data.system.uptime)), 1 /* TEXT */)
+              ])
+            ])
+          ])
+        ]))
+      : _createCommentVNode("v-if", true),
     _createElementVNode("div", _hoisted_1, [
       _createElementVNode("div", _hoisted_2, [
         _createElementVNode("div", _hoisted_3, [
