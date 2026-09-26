@@ -515,7 +515,7 @@ def _ai_knowledge_loop():
             if not _knowledge_dirty.is_set():
                 continue
             cfg = _load_config()
-            if not cfg.get('upload_enabled', True):
+            if not cfg.get('upload_enabled', False):   # P-25q：默认关闭（与 ai.py 保持一致）
                 continue
             from . import binding
             if binding.status()['mode'] != 'bound':

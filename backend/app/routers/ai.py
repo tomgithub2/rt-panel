@@ -9,6 +9,8 @@
 """
 import base64
 import hashlib
+import io
+import secrets
 import json
 import os
 import re
@@ -101,10 +103,35 @@ TOOL_LABELS = {
 }
 
 
+AI_KEY_FILE = os.path.join(DATA_DIR, 'ai.key')
+
+
 def _fernet():
+    """P-25p：AI API Key 用**独立随机密钥**加密（0600 落盘），不再由 machine_id 派生。
+
+    原实现 `sha256('rt-ai-key:' + machine_id())` —— machine_id 是硬件信息的哈希，
+    任何能读到硬件信息（或知道 machine_id，机器码在多处接口可见）的人都能推出密钥、
+    解开数据库里的第三方 API Key。
+    """
     from cryptography.fernet import Fernet
-    key = hashlib.sha256(('rt-ai-key:' + machine_id()).encode()).digest()
-    return Fernet(base64.urlsafe_b64encode(key))
+    try:
+        if os.path.isfile(AI_KEY_FILE):
+            raw = io.open(AI_KEY_FILE, 'rb').read().strip()
+            if raw:
+                return Fernet(raw)
+    except Exception:
+        pass
+    key = base64.urlsafe_b64encode(secrets.token_bytes(32))
+    fd = os.open(AI_KEY_FILE, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, key)
+    finally:
+        os.close(fd)
+    try:
+        os.chmod(AI_KEY_FILE, 0o600)
+    except Exception:
+        pass
+    return Fernet(key)
 
 
 def _load_config() -> dict:
@@ -178,7 +205,8 @@ def get_config(user: dict = Depends(require_perm('settings:view'))):
         'temperature': cfg.get('temperature', 0.7),
         'timeout': cfg.get('timeout', 120),
         'has_key': bool(cfg.get('api_key_enc')),
-        'upload_enabled': bool(cfg.get('upload_enabled', True)),
+        # P-25q：知识库"上传到官网共享池"默认**关闭**（原默认开启 + 每 30 分钟自动外传）
+    'upload_enabled': bool(cfg.get('upload_enabled', False)),
         'last_upload': cfg.get('last_upload', 0),
     }
 
@@ -209,7 +237,7 @@ def save_config(body: dict, request: Request, user: dict = Depends(require_perm(
     if 'upload_enabled' in body:
         cfg['upload_enabled'] = bool(body.get('upload_enabled'))
     else:
-        cfg.setdefault('upload_enabled', True)
+        cfg.setdefault('upload_enabled', False)   # P-25q：默认关闭
     if 'api_key' in body:
         new_key = str(body.get('api_key', '')).strip()
         if new_key and '*' not in new_key:
@@ -300,6 +328,21 @@ def _maybe_summarize(user_id: int, cfg: dict):
 
 
 # ---------------- 知识库上传官网 ----------------
+def _scrub_entry(text: str) -> str:
+    """P-25q：上传前脱敏 —— 去掉 IP、域名、绝对路径与疑似口令/密钥。
+
+    知识条来自 AI 对话，可能夹带主机信息、路径甚至口令；上传到官网共享池前必须清洗。
+    """
+    import re as _re
+    t = str(text or '')
+    t = _re.sub(r'\b\d{1,3}(?:\.\d{1,3}){3}\b', '<ip>', t)
+    t = _re.sub(r'(?i)\b(password|passwd|pwd|token|secret|api[_-]?key)\b\s*[:=]\s*\S+',
+                r'\1=<redacted>', t)
+    t = _re.sub(r'/(?:home|root|www|var|etc|opt|usr)/\S*', '<path>', t)
+    t = _re.sub(r'\b[A-Za-z0-9][A-Za-z0-9.-]*\.(?:com|cn|net|org|icu|io|top|xyz)\b', '<domain>', t)
+    return t[:300]
+
+
 def upload_knowledge() -> dict:
     """把全部用户的知识库上传到官网（绑定有效时）。"""
     from .. import binding
@@ -312,9 +355,11 @@ def upload_knowledge() -> dict:
         'token': data.get('token', ''),
         'binding_id': data.get('binding_id', ''),
         'machine_id': st.get('machine_id', ''),
-        'entries': _q('SELECT entry, created_at FROM ai_knowledge '
-                      'ORDER BY id DESC LIMIT 100'),
-        'summary': f'共 {_q("SELECT COUNT(*) c FROM ai_knowledge", one=True)["c"]} 条知识',
+        # P-25q：① 逐条脱敏；② 不再上报全局条数（避免泄露面板用户规模/活跃度）
+    'entries': [{'entry': _scrub_entry(r['entry']), 'created_at': r['created_at']}
+                    for r in _q('SELECT entry, created_at FROM ai_knowledge '
+                                'ORDER BY id DESC LIMIT 50')],
+        'summary': 'anonymized',
     }
     try:
         req = urllib.request.Request(
