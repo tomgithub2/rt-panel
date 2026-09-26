@@ -121,9 +121,23 @@ def restore(body: dict, request: Request, user: dict = Depends(require_perm('bac
         db = str(body.get('database', '')).strip()
         if not _re.fullmatch(r'[A-Za-z][A-Za-z0-9_]{0,63}', db):
             raise HTTPException(status_code=400, detail='目标数据库名无效（仅字母数字下划线，字母开头）')
-        if not os.path.isfile(src):
+        # P-25c：src 必须落在 BACKUP_DIR 内（原来任意路径都能喂给 root 管道）
+        real_src = os.path.realpath(src)
+        if os.path.commonpath([os.path.realpath(BACKUP_DIR), real_src]) != os.path.realpath(BACKUP_DIR):
+            raise HTTPException(status_code=400, detail='备份文件必须位于备份目录内')
+        if not os.path.isfile(real_src):
             raise HTTPException(status_code=400, detail='备份文件不存在')
-        r = run_cmd(f'gunzip -c "{src}" | mysql -uroot {db}', timeout=3600, shell=True)
+        # 用 gzip 解压 + stdin 喂给 mysql，全程 argv（不再有 shell 管道）
+        import gzip
+        try:
+            with gzip.open(real_src, 'rb') as f:
+                sql = f.read()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f'备份文件不是有效的 gzip：{e}')
+        if len(sql) > 2 * 1024 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail='备份文件过大，请手工恢复')
+        r = run_cmd(['mysql', '-uroot', db], timeout=3600, shell=False,
+                    input_text=sql.decode('utf-8', 'ignore'))
         if r['code'] != 0:
             raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:300] or '恢复失败')
         audit(user['username'], get_client_ip(request), 'backup_restore',

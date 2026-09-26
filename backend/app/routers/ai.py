@@ -432,11 +432,48 @@ def execute_action(body: dict, request: Request, user: dict = Depends(require_pe
     return {'ok': True, 'tool': tool, 'result': result}
 
 
-def _dispatch(tool: str, p: dict, user: dict) -> str:
-    from ..utils import sysinfo
-    from ..utils.exec_utils import run_cmd
-    from ..database import execute, now, query
+# ---------------- P-04：工具 → 所需权限 ----------------
+# 根因：_dispatch 直接函数调用各路由函数，FastAPI 的 Depends(require_perm(...)) 不会执行，
+# 所以必须在分发入口按表复检权限，否则光有 ai:use 就能调用 system:manage 级别的能力。
+TOOL_PERM = {
+    'get_system_info': 'dashboard:view', 'run_healthcheck': 'security:view',
+    'scan_bigfiles': 'files:read', 'check_updates': 'settings:view',
+    'list_files': 'files:read', 'read_file': 'files:read',
+    'list_software': 'software:view', 'install_software': 'software:manage',
+    'create_site': 'websites:manage', 'create_proxy': 'websites:manage',
+    'list_sites': 'websites:view', 'delete_site': 'websites:manage',
+    'issue_ssl': 'ssl:manage', 'list_certs': 'ssl:view',
+    'list_databases': 'databases:view', 'create_database': 'databases:manage',
+    'query_db': 'databases:view', 'backup_database': 'databases:manage',
+    'open_port': 'firewall:manage', 'block_ip': 'firewall:manage',
+    'create_cron': 'cron:manage', 'list_cron': 'cron:view',
+    'create_backup_task': 'backups:manage', 'run_backup': 'backups:manage',
+    'list_backup_tasks': 'backups:view',
+    'docker_status': 'docker:view', 'list_containers': 'docker:view',
+    'docker_action': 'docker:manage', 'service_action': 'services:manage',
+    'create_ftp_user': 'ftp:manage', 'add_guardian': 'security:manage',
+    'deploy_app': 'software:manage',
+}
 
+
+def _tool_allowed(tool: str, user: dict) -> bool:
+    """按工具所属路由的权限复检（admin 直接放行）。"""
+    from ..rbac import role_permissions
+    need = TOOL_PERM.get(tool)
+    if not need:
+        return False          # 表里没有的工具一律不放行（含已被移除的 run_shell_command）
+    if user.get('role') == 'admin':
+        return True
+    return need in role_permissions(user.get('role'))
+
+def _dispatch(tool: str, p: dict, user: dict) -> str:
+    # P-04：任意命令执行是 root 级别的后门，该工具直接下线（放在权限检查之前，给出明确原因）
+    if tool == 'run_shell_command':
+        return '出于安全考虑，AI 助手已不再提供任意命令执行能力；请使用软件商店/定时任务/文件管理等受控功能'
+    # P-04：再做权限复检（分发是函数直调，路由上的 Depends 不会执行）
+    if not _tool_allowed(tool, user):
+        return f'无权执行该操作（{TOOL_LABELS.get(tool, tool)}），请让管理员在用户权限里开通'
+    from ..utils import sysinfo
     if tool == 'get_system_info':
         o = sysinfo.overview()
         return (f"CPU {o['cpu']['percent']}%（{o['cpu']['cores']}核{o['cpu']['threads']}线程）｜"
@@ -525,7 +562,8 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         execute('INSERT INTO websites (domain,root,port,type,engine,status,created_at) '
                 'VALUES (?,?,?,?,?,1,?)', (domain, root, 80, 'static', 'nginx', now()))
         _render_nginx()
-        run_cmd('nginx -t 2>&1 && nginx -s reload 2>&1', timeout=30, shell=True)
+        run_cmd(['nginx', '-t'], timeout=30, shell=False)
+        run_cmd(['nginx', '-s', 'reload'], timeout=30, shell=False)
         return f'网站 {domain} 创建成功（目录 {root}），已生成首页'
     if tool == 'create_proxy':
         from .routers.websites import _render_nginx
@@ -538,7 +576,8 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
                 'VALUES (?,?,?,?,?,?,1,?)',
                 (domain, '', port, 'proxy', 'nginx', target, now()))
         _render_nginx()
-        run_cmd('nginx -t 2>&1 && nginx -s reload 2>&1', timeout=30, shell=True)
+        run_cmd(['nginx', '-t'], timeout=30, shell=False)
+        run_cmd(['nginx', '-s', 'reload'], timeout=30, shell=False)
         return f'反向代理 {domain} → {target} 创建成功'
     if tool == 'list_sites':
         rows = query('SELECT domain,type,port,status FROM websites ORDER BY id DESC')
@@ -550,24 +589,37 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         domain = str(p.get('domain', '')).strip()
         execute('DELETE FROM websites WHERE domain=?', (domain,))
         _render_nginx()
-        run_cmd('nginx -t 2>&1 && nginx -s reload 2>&1', timeout=30, shell=True)
+        run_cmd(['nginx', '-t'], timeout=30, shell=False)
+        run_cmd(['nginx', '-s', 'reload'], timeout=30, shell=False)
         return f'网站 {domain} 已删除'
     if tool == 'issue_ssl':
-        from .routers.ssl import _cert_meta
-        domain = str(p.get('domain', '')).strip()
-        d = os.path.join(DATA_DIR, 'certs', domain)
+        # P-03 同源：这里原本复刻了 ssl.py 的字符串拼接命令，现在直接复用已校验的实现
+        from .ssl import _cert_meta, _valid_domain
+        from ..config import CERT_DIR as _CERT_DIR
+        try:
+            domain = _valid_domain(p.get('domain', ''))
+        except Exception:
+            return '域名格式不正确'
+        d = os.path.join(_CERT_DIR, domain)
         os.makedirs(d, exist_ok=True)
         key = os.path.join(d, 'privkey.pem')
         cert = os.path.join(d, 'fullchain.pem')
-        r = run_cmd(f'openssl req -x509 -newkey rsa:2048 -keyout "{key}" -out "{cert}" '
-                    f'-days 365 -nodes -subj "/CN={domain}" '
-                    f'-addext "subjectAltName=DNS:{domain}"', timeout=120, shell=True)
+        r = run_cmd(['openssl', 'req', '-x509', '-newkey', 'rsa:2048',
+                     '-keyout', key, '-out', cert, '-days', '365', '-nodes',
+                     '-subj', f'/CN={domain}',
+                     '-addext', f'subjectAltName=DNS:{domain}'],
+                    timeout=120, shell=False)
         if r['code'] != 0:
-            return '证书签发失败: ' + r['stderr'][:200]
+            return '证书生成失败：' + (r['stderr'] or '')[:200]
+        try:
+            os.chmod(key, 0o600)
+        except Exception:
+            pass
         meta = _cert_meta(cert)
         execute('INSERT OR REPLACE INTO ssl_certs (domain,type,cert_path,key_path,expires,created_at) '
-                'VALUES (?,?,?,?,?,?)', (domain, 'selfsigned', cert, key, meta.get('expires'), now()))
-        return f'已为 {domain} 签发自签名证书（有效期 365 天）'
+                'VALUES (?,?,?,?,?,?)',
+                (domain, 'selfsigned', cert, key, meta.get('expires'), now()))
+        return f'已为 {domain} 生成自签名证书（有效期至 {meta.get("expires")}）'
     if tool == 'list_certs':
         rows = query('SELECT domain,type,expires FROM ssl_certs ORDER BY id DESC')
         return '证书列表：\n' + '\n'.join(f"{r['domain']}（{r['type']}）" for r in rows) or '暂无证书'
@@ -618,9 +670,10 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         if not re.match(r'^[A-Za-z0-9 _-]*$', name):
             name = f'RTPanel-AI-{port}'
         if IS_WIN:
-            r = run_cmd(f'powershell -NoProfile -Command "New-NetFirewallRule -DisplayName '
-                        f"'{name}' -Direction Inbound -Protocol {protocol.upper()} "
-                        f'-LocalPort {port} -Action Allow"', timeout=60, shell=True)
+            # §0.2：改 argv（port 已过整数/范围校验、protocol 有白名单、name 有正则兜底）
+            _script = ("New-NetFirewallRule -DisplayName '" + name + "' -Direction Inbound "
+                       '-Protocol ' + protocol.upper() + ' -LocalPort ' + str(port) + ' -Action Allow')
+            r = run_cmd(['powershell', '-NoProfile', '-Command', _script], timeout=60, shell=False)
         else:
             r = run_cmd(['iptables', '-I', 'INPUT', '-p', protocol,
                          '--dport', str(port), '-j', 'ACCEPT'], timeout=30, shell=False)
@@ -632,9 +685,9 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
             return 'IP 无效'
         from ..utils.exec_utils import IS_WIN
         if IS_WIN:
-            run_cmd(f'powershell -NoProfile -Command "New-NetFirewallRule -DisplayName '
-                    f"'RTPanel-AI-Block-{ip}' -Direction Inbound -RemoteAddress {ip} "
-                    f'-Action Block"', timeout=60, shell=True)
+            _script2 = ("New-NetFirewallRule -DisplayName 'RTPanel-AI-Block-" + ip
+                        + "' -Direction Inbound -RemoteAddress " + ip + ' -Action Block')
+            run_cmd(['powershell', '-NoProfile', '-Command', _script2], timeout=60, shell=False)
         else:
             run_cmd(['iptables', '-I', 'INPUT', '-s', ip, '-j', 'DROP'],
                     timeout=30, shell=False)
@@ -705,24 +758,29 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         return '服务列表（前 20）：\n' + '\n'.join(
             f"{x['name']}（{x['status']}）" for x in s['list'][:20])
     if tool == 'service_action':
-        name = str(p.get('name', '')).strip()
+        # P-05：复用正规路由的校验与参数形式（原来自己拼 shell，action/name 无白名单，
+        # Windows 分支的单引号还能逃逸）
+        from .services import _service_name
+        from ..utils.exec_utils import IS_WIN as _IS_WIN
+        try:
+            name = _service_name(p.get('name', ''))
+        except Exception:
+            return '服务名称格式无效'
         a = str(p.get('action', '')).strip()
-        from ..utils.exec_utils import IS_WIN
-        if IS_WIN:
-            cmd = f'powershell -NoProfile -Command "{{ $s = Get-Service -Name \'{name}\' -ErrorAction Stop; '
-            if a == 'start':
-                cmd += '$s | Start-Service'
-            elif a == 'stop':
-                cmd += '$s | Stop-Service'
-            elif a == 'restart':
-                cmd += '$s | Restart-Service'
-            else:
-                return '操作无效'
-            cmd += '"'
+        if a not in ('start', 'stop', 'restart', 'reload', 'enable', 'disable'):
+            return '不支持的服务操作'
+        if _IS_WIN:
+            script = (f"$s = Get-Service -Name '{name}' -ErrorAction Stop; "
+                      + ('$s | Start-Service' if a == 'start' else
+                         '$s | Stop-Service' if a == 'stop' else
+                         '$s | Restart-Service' if a == 'restart' else
+                         f"Set-Service -Name '{name}' -StartupType "
+                         + ('Automatic' if a == 'enable' else 'Disabled')))
+            cmd = ['powershell', '-NoProfile', '-Command', script]
+            r = run_cmd(cmd, timeout=120, shell=False)
         else:
-            cmd = f'systemctl {a} {name}'
-        r = run_cmd(cmd, timeout=120, shell=True)
-        return (f'服务 {name} {a} 完成' if r['code'] == 0 else '操作失败: ' + r['stderr'][:200])
+            r = run_cmd(['systemctl', a, name], timeout=120, shell=False)
+        return (f'已{ a }服务 {name}：' + ('成功' if r['code'] == 0 else (r['stderr'] or r['stdout'])[:200]))
     if tool == 'add_guardian':
         name = str(p.get('name', '')).strip()
         process = str(p.get('process', '')).strip()
@@ -776,15 +834,5 @@ p{{color:#8d8677;max-width:600px;line-height:1.9;padding:0 20px;text-align:cente
         from .dns import flush_dns_core
         ok, out = flush_dns_core()
         return 'DNS 缓存已刷新' if ok else '刷新失败: ' + out[:100]
-    if tool == 'run_shell_command':
-        cmd = str(p.get('cmd', '')).strip()
-        if not cmd:
-            return '命令不能为空'
-        if len(cmd) > 4000:
-            return '命令过长（最多 4000 字符）'
-        # 任意命令：执行前审计，超时 300 秒，输出截断
-        audit(user['username'], '', 'ai_shell', f'AI 执行任意命令: {cmd[:200]}', 'warning')
-        r = run_cmd(cmd, timeout=300, shell=True)
-        out = (r['stdout'] + r['stderr'])[-4000:]
         return f'退出码 {r["code"]}：\n{out}' if out else f'退出码 {r["code"]}（无输出）'
     return f'未知工具: {tool}'

@@ -98,7 +98,9 @@ def _tail_file(path: str, lines: int):
 @router.get('/tail')
 def tail_file(path: str, lines: int = 100,
               user: dict = Depends(require_perm('logs:view'))):
-    """任意日志文件 tail（复用文件管理权限语义）。"""
+    """日志文件 tail（复用文件管理权限语义）。P-01：必须先过敏感路径守卫。"""
+    from ..utils.pathguard import assert_allowed
+    path = assert_allowed(path)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail='文件不存在')
     r = run_cmd(['tail', '-n', str(min(lines, 2000)), path], timeout=20, shell=False)

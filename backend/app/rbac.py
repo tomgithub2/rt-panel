@@ -59,7 +59,10 @@ ROLES = {
         'desc': '仅可查看信息，不能执行任何变更操作',
         'perms': {
             'dashboard:view', 'monitor:view',
-            'files:read', 'files:download',
+            # P-01：viewer 不再持有 files:read / files:download。
+            # 「只读访客」和「能读主机任意文件」是两种能力，必须拆开：
+            # 否则一个 viewer 账号就能读走 secret.key / rtpanel.db，等同拿到 root。
+            # 需要看站点文件请单独授予 files:read（或后续增加受限的"站点目录"权限）。
             'processes:view', 'services:view', 'cron:view',
             'firewall:view', 'network:view',
             'software:view', 'websites:view', 'ssl:view', 'databases:view',

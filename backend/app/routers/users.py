@@ -56,9 +56,19 @@ def user_update(uid: int, body: dict, request: Request,
     target = query('SELECT * FROM users WHERE id=?', (uid,), one=True)
     if not target:
         raise HTTPException(status_code=404, detail='用户不存在')
-    if target['role'] == 'admin' and body.get('status') == 0 and \
-            query('SELECT COUNT(*) c FROM users WHERE role="admin" AND status=1', one=True)['c'] <= 1:
-        raise HTTPException(status_code=400, detail='至少保留一个启用状态的管理员')
+    # P-25e：先把类型归一化再判定 —— 原来 `{"status": ""}` 绕过守卫后被下面归一成 0，
+    # `{"role": "viewer"}` 也能把唯一管理员降级（两条路都能让面板失去管理员）。
+    raw_status = body.get('status', None)
+    if raw_status is not None:
+        raw_status = 1 if str(raw_status).strip().lower() not in ('0', 'false', 'off', '') else 0
+    raw_role = body.get('role', None)
+    admin_left = query('SELECT COUNT(*) c FROM users WHERE role="admin" AND status=1',
+                       one=True)['c']
+    if target['role'] == 'admin' and admin_left <= 1:
+        if raw_status == 0:
+            raise HTTPException(status_code=400, detail='至少保留一个启用状态的管理员')
+        if raw_role is not None and raw_role != 'admin':
+            raise HTTPException(status_code=400, detail='不能降级最后一个管理员，请先新增管理员')
     fields = {}
     for k in ('role', 'email', 'remark', 'status'):
         if k in body:
@@ -82,6 +92,9 @@ def user_password(uid: int, body: dict, request: Request,
     policy_error = password_policy_error(password)
     if policy_error:
         raise HTTPException(status_code=400, detail=policy_error)
+    # P-14：管理员重置密码后，被重置用户的旧令牌立即失效
+    from ..auth import bump_token_epoch
+    bump_token_epoch(uid)
     execute('UPDATE users SET password_hash=? WHERE id=?', (hash_password(password), uid))
     audit(user['username'], get_client_ip(request), 'user_password',
           f'重置用户 #{uid} 的密码', 'warning')

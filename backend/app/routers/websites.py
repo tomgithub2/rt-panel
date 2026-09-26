@@ -42,19 +42,75 @@ def _php_fpm_sock() -> str:
     return ''
 
 
+# 站点目录绝对不能指向这些位置（nginx 会以 root 读取并对外提供）
+_FORBIDDEN_ROOT_DIRS = ('/etc', '/root', '/proc', '/sys', '/dev', '/boot', '/var/lib', '/usr')
+
+
 def _safe_site_root(value: object) -> str:
-    root = os.path.abspath(str(value or '').strip())
-    if not root or any(ch in root for ch in ('\x00', '\n', '\r', ';', '{', '}', '"', "'")):
+    """站点根目录校验（P-08）。
+
+    原实现只做字符黑名单：`{"root":"/"}` 能通过，于是启用站点后**未认证**就能
+    读 `/etc/passwd`、面板 `backend/data/secret.key`（与 P-01 同一条链）。
+    现在强制落在 WWWROOT_DIR 内，并显式拒绝系统目录。
+    """
+    raw = str(value or '').strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail='站点目录不能为空')
+    if any(ch in raw for ch in ('\x00', '\n', '\r', '\t', '\v', '\f', '$', ';', '{', '}', '"', "'")):
         raise HTTPException(status_code=400, detail='站点目录包含不安全字符')
+    # 相对路径按 WWWROOT 解析（前端允许只填目录名），绝对路径原样校验
+    candidate = raw if os.path.isabs(raw) else os.path.join(WWWROOT_DIR, raw)
+    root = os.path.realpath(os.path.abspath(candidate))
+    base = os.path.realpath(WWWROOT_DIR)
+    for bad in _FORBIDDEN_ROOT_DIRS:
+        if root == bad or root.startswith(bad + os.sep):
+            raise HTTPException(status_code=400, detail=f'站点目录不能位于 {bad}')
+    try:
+        inside = os.path.commonpath([base, root]) == base
+    except ValueError:
+        inside = False
+    if not inside:
+        raise HTTPException(status_code=400, detail=f'站点目录必须位于 {base} 内')
     return root
 
 
+PROXY_TARGET_RE = re.compile(
+    r'^https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[^\s\'"{};$,]*)?$')
+
+
 def _safe_proxy_target(value: object) -> str:
+    """反向代理目标白名单（P-09）。
+
+    原来只挡 ; { } " ' 与空白，`$` 能过 —— 而 nginx 会展开变量：
+    `proxy_pass http://$http_host/` 让任意客户端用 Host 头把服务器变成 SSRF/开放代理
+    （打内网、打云元数据 169.254.169.254、回环探面板自身端口都行，且利用阶段无需凭据）。
+    """
     target = str(value or '').strip()
     parsed = urlparse(target)
     if (parsed.scheme not in ('http', 'https') or not parsed.netloc or
-            any(ch.isspace() for ch in target) or any(ch in target for ch in (';', '{', '}', '"', "'"))):
+            any(ch.isspace() for ch in target) or any(ch in target for ch in (';', '{', '}', '"', "'", '$'))):
         raise HTTPException(status_code=400, detail='反向代理地址必须为有效的 HTTP(S) URL')
+    if not PROXY_TARGET_RE.match(target):
+        raise HTTPException(status_code=400, detail='反向代理地址包含不允许的字符')
+    host = (parsed.hostname or '').strip()
+    if not host:
+        raise HTTPException(status_code=400, detail='反向代理地址缺少主机名')
+    # 禁止指向内网/回环/链路本地（域名先解析再判定）
+    import ipaddress
+    import socket
+    candidates = []
+    try:
+        candidates.append(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            for info in socket.getaddrinfo(host, None):
+                candidates.append(ipaddress.ip_address(info[4][0]))
+        except Exception:
+            pass
+    for ip in candidates:
+        if (not ip.is_global) or ip.is_loopback or ip.is_link_local or ip.is_private:
+            raise HTTPException(status_code=400,
+                                detail=f'反向代理目标不能指向内网/本机地址：{ip}')
     return target
 
 
@@ -374,17 +430,21 @@ def _auto_create_ftp(domain: str, root: str, ftp_user: str = '') -> dict:
     r = run_cmd('vsftpd -version 2>&1', timeout=10, shell=True)
     if r['code'] != 0 and 'vsftpd' not in (r['stdout'] + r['stderr']).lower():
         return {'ok': False, 'error': '未检测到 vsftpd（请在「软件商店」安装 FTP 服务）'}
+    # 名字统一走 FTP 前缀（P-02：避免撞上 root/www-data 等系统账号）
     if ftp_user:
         user = re.sub(r'[^a-z0-9_]', '_', ftp_user.lower())[:20].strip('_') or \
-            ('ftp_' + re.sub(r'[^a-z0-9_]', '_', domain)[:20].strip('_'))
+            ('rtftp_' + re.sub(r'[^a-z0-9_]', '_', domain)[:14].strip('_'))
     else:
-        user = 'ftp_' + re.sub(r'[^a-z0-9_]', '_', domain)[:20].strip('_')
+        user = 'rtftp_' + re.sub(r'[^a-z0-9_]', '_', domain)[:14].strip('_')
+    if not user.startswith('rtftp_'):
+        user = 'rtftp_' + user.lstrip('_')[:14]
     pwd = _secrets.token_hex(6)
-    # 参数列表与 stdin 避免站点目录或口令进入 shell。
-    run_cmd(['useradd', '-m', '-d', root, '-s', '/sbin/nologin', user], timeout=20, shell=False)
-    r2 = run_cmd(['chpasswd'], timeout=20, shell=False, input_text=f'{user}:{pwd}\n')
-    if r2['code'] != 0:
-        return {'ok': False, 'error': 'FTP 账号创建失败：' + (r2['stderr'] or '')[:150]}
+    # 复用 FTP 模块的核心逻辑：系统账号占用检查 + useradd 返回码检查 + uid 复核都在那里，
+    # 早先这里各写一遍（正是 P-02：可以借建站接口把 root 口令改掉并回显）。
+    from .ftp import ftp_create_core
+    created = ftp_create_core(user, root, pwd, note=f'建站自动创建（{domain}）')
+    if not created.get('ok'):
+        return {'ok': False, 'error': created.get('error', 'FTP 账号创建失败')}
     return {'ok': True, 'user': user, 'password': pwd, 'dir': root}
 
 
@@ -425,7 +485,7 @@ def site_update(sid: int, body: dict, request: Request,
     if not 1 <= port <= 65535:
         raise HTTPException(status_code=400, detail='端口无效')
     execute('UPDATE websites SET root=?, config=?, port=? WHERE id=?', (root, config, port, sid))
-    _render_nginx()
+    _render_with_verify()
     _reload_nginx()
     audit(user['username'], get_client_ip(request), 'website_update', f'修改网站 {site["domain"]}')
     return {'ok': True}
@@ -605,11 +665,12 @@ def site_put_settings(sid: int, body: dict, request: Request,
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     pseudo = str(body.get('pseudo', ''))[:20]
-    redirect = str(body.get('redirect', '')).strip()[:300]
+    # P-06：这三项会进 nginx 配置，必须过白名单（原来只做长度截断/简单前缀判断）
+    redirect = _validate_redirect(str(body.get('redirect', '')).strip()[:300])
     auth_user = str(body.get('auth_user', '')).strip()[:50]
     auth_pass = str(body.get('auth_pass', ''))
-    hotlink = str(body.get('hotlink', '')).strip()[:300]
-    custom_pseudo = str(body.get('custom_pseudo', '')).strip()[:500]
+    hotlink = _validate_hotlink(str(body.get('hotlink', '')).strip()[:300])
+    custom_pseudo = _validate_custom_pseudo(str(body.get('custom_pseudo', '')).strip()[:500])
     # 多域名绑定 / 强制 HTTPS / 默认文档
     domains = str(body.get('domains', '')).strip()[:500]
     force_https = 1 if body.get('force_https') else 0
@@ -653,12 +714,96 @@ def site_put_settings(sid: int, body: dict, request: Request,
     if pseudo == 'custom':
         execute('UPDATE site_settings SET pseudo=? WHERE site_id=?',
                 ('custom::' + custom_pseudo, sid))
-    _render_nginx()
+    _render_with_verify()
     _reload_nginx()
     audit(user['username'], get_client_ip(request), 'website_settings',
           f'修改网站 {site["domain"]} 高级设置（伪静态/重定向/密码/防盗链/多域名/HTTPS）', 'warning')
     return {'ok': True}
 
+
+
+# ---------------- P-06：nginx 配置注入防护 ----------------
+# 进 nginx 配置的用户输入必须过白名单：nginx 的词法与行无关，一个 `;` 就能提前结束当前指令，
+# 一个 `}` 就能跳出 location/server 块，所以"只转义换行"远远不够。
+NGINX_CONF_FILE = '/etc/nginx/conf.d/RT面板.conf'
+_DOMAIN_TOKEN_RE = re.compile(r'^[A-Za-z0-9.*_-]{1,253}$')
+_REDIRECT_BAD = set(';{}#\n\r$')
+_PSEUDO_BAD = set('{}')
+_PSEUDO_FORBIDDEN = ('location', 'include', 'server', 'proxy_pass', 'alias',
+                     'upstream', 'root', 'fastcgi_pass', 'return', 'rewrite_log')
+
+
+def _validate_hotlink(hotlink: str) -> str:
+    """防盗链域名列表：空格分隔，逐个走域名白名单。"""
+    if not hotlink:
+        return ''
+    tokens = hotlink.replace('\n', ' ').split()
+    if len(tokens) > 20:
+        raise HTTPException(status_code=400, detail='防盗链域名过多（最多 20 个）')
+    for t in tokens:
+        if not _DOMAIN_TOKEN_RE.match(t):
+            raise HTTPException(status_code=400, detail=f'防盗链域名无效：{t}')
+    return ' '.join(tokens)
+
+
+def _validate_redirect(redirect: str) -> str:
+    if not redirect:
+        return ''
+    if not redirect.startswith(('http://', 'https://', '/')):
+        raise HTTPException(status_code=400, detail='重定向地址需以 http(s):// 或 / 开头')
+    if any(ch in _REDIRECT_BAD for ch in redirect) or any(ch.isspace() for ch in redirect):
+        raise HTTPException(status_code=400, detail='重定向地址包含非法字符（; { } # $ 空白）')
+    if not re.match(r'^[A-Za-z0-9\-._~:/?#\[\]@!&\'()*+,=%]+$', redirect):
+        raise HTTPException(status_code=400, detail='重定向地址包含不允许的字符')
+    return redirect
+
+
+def _validate_custom_pseudo(text: str) -> str:
+    """自定义伪静态片段：允许 nginx 指令，但禁止任何能改变配置结构的内容。"""
+    if not text:
+        return ''
+    if any(ch in _PSEUDO_BAD for ch in text):
+        raise HTTPException(status_code=400, detail='伪静态规则不能包含 { 或 }')
+    low = text.lower()
+    for kw in _PSEUDO_FORBIDDEN:
+        if re.search(r'(^|[^a-z0-9_])' + kw + r'([^a-z0-9_]|$)', low):
+            raise HTTPException(status_code=400, detail=f'伪静态规则不允许使用 {kw} 指令')
+    if len(text) > 500:
+        raise HTTPException(status_code=400, detail='伪静态规则过长（最多 500 字符）')
+    return text
+
+
+def _nginx_available() -> bool:
+    import shutil
+    return shutil.which('nginx') is not None
+
+
+def _render_with_verify():
+    """渲染站点配置后跑 nginx -t；不通过就回滚文件并 400（避免坏配置留在磁盘上全站起不来）。"""
+    prev = None
+    had = os.path.isfile(NGINX_CONF_FILE)
+    if had:
+        try:
+            with open(NGINX_CONF_FILE, 'rb') as f:
+                prev = f.read()
+        except Exception:
+            prev = None
+    _render_nginx()
+    if not _nginx_available():
+        return          # 本机没装 nginx（如 Windows 开发机）：跳过校验
+    r = run_cmd('nginx -t 2>&1', timeout=30, shell=True)
+    if r['code'] == 0:
+        return
+    detail = (r['stderr'] or r['stdout'] or '')[-300:]
+    try:
+        if prev is not None:
+            with open(NGINX_CONF_FILE, 'wb') as f:
+                f.write(prev)
+        elif had:
+            os.remove(NGINX_CONF_FILE)
+    except Exception:
+        pass
+    raise HTTPException(status_code=400, detail=f'nginx 配置校验失败，已回滚：{detail}')
 
 def _render_single(site: dict) -> str:
     from ..waf_core import render_waf_block

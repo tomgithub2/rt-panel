@@ -34,12 +34,18 @@ def _database_kind(value: object, allow_redis: bool = False) -> str:
 
 
 def _mysql_cmd(args: str, root_pwd: str = '') -> str:
-    base = 'mysql --connect-timeout=10'
-    if root_pwd:
-        base += f' -uroot -p{root_pwd}'
-    else:
-        base += ' -uroot'
+    """P-25r：口令不进 argv（`ps` 对所有用户可见）。
+
+    原来的 `-p<口令>` 形式会把 root 口令暴露在进程列表里；现在若调用方要传口令，
+    请改用 _mysql_env(root_pwd) 得到的 MYSQL_PWD 环境变量（当前无调用方传参，属未引爆的地雷）。
+    """
+    base = 'mysql --connect-timeout=10 -uroot'
     return f'{base} {args}'
+
+
+def _mysql_env(root_pwd: str = '') -> dict:
+    """把 MySQL 口令放在环境变量里（替代 argv 传参）。"""
+    return {'MYSQL_PWD': root_pwd} if root_pwd else {}
 
 
 def _psql_cmd(args: str) -> str:
@@ -114,9 +120,29 @@ def db_list(kind: str, user: dict = Depends(require_perm('databases:view'))):
             raise HTTPException(status_code=500, detail=(r['stderr'] or '连接失败')[:300])
         return {'list': [{'name': l.strip()} for l in r['stdout'].splitlines() if l.strip()]}
     if kind == 'sqlite':
-        from ..config import DATA_DIR
-        files = [f for f in os.listdir(DATA_DIR) if f.endswith('.db')]
-        return {'list': [{'name': f[:-3], 'file': os.path.join(DATA_DIR, f)} for f in files]}
+        # P-07：原来把 DATA_DIR 下所有 .db 都列出来，等于把面板自己的 rtpanel.db
+        # （含全部 password_hash / totp_secret）和更新备份暴露成"可查询的数据库"。
+        # 现在只列 WWWROOT 等业务目录下的库，并显式排除面板数据/备份目录。
+        from ..config import BACKUP_DIR, DATA_DIR
+        from ..utils.pathguard import is_sensitive
+        roots = []
+        for cand in ('/www/wwwroot', os.path.join(DATA_DIR, 'sqlite')):
+            if os.path.isdir(cand):
+                roots.append(cand)
+        found = []
+        for root in roots:
+            for base, _dirs, names in os.walk(root):
+                if is_sensitive(base):
+                    continue
+                for f in names:
+                    if not f.endswith('.db'):
+                        continue
+                    fp = os.path.join(base, f)
+                    if is_sensitive(fp) or os.path.realpath(fp).startswith(
+                            os.path.realpath(BACKUP_DIR)):
+                        continue
+                    found.append({'name': f[:-3], 'file': fp})
+        return {'list': found}
     if kind == 'redis':
         # Redis：列出键名（前 200），展示内存/键数（自研管理视图）
         r = run_cmd('redis-cli ping', timeout=10)
@@ -140,7 +166,10 @@ def db_create(kind: str, body: dict, request: Request,
     kind = _database_kind(kind)
     name = _identifier(body.get('name', ''), '数据库名')
     if kind == 'mysql':
-        charset = body.get('charset', 'utf8mb4')
+        # P-25l：charset 会拼进 SQL/shell（Windows 分支走 cmd），必须白名单
+        charset = str(body.get('charset', 'utf8mb4')).strip().lower()
+        if charset not in ('utf8', 'utf8mb4', 'gbk', 'gb2312', 'latin1', 'ascii', 'utf8mb3'):
+            raise HTTPException(status_code=400, detail='字符集不受支持')
         r = run_cmd(_mysql_cmd(
             f'-e "CREATE DATABASE IF NOT EXISTS `{name}` CHARACTER SET {charset};"'), timeout=30)
     elif kind == 'postgresql':

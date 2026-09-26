@@ -61,6 +61,51 @@ def _service_status() -> str:
     return 'inactive'
 
 
+
+# ---------------- P-21：SSH 生效值读写 ----------------
+DROPIN_DIR = '/etc/ssh/sshd_config.d'
+DROPIN_FILE = os.path.join(DROPIN_DIR, '00-rtpanel.conf')
+
+
+def _sshd_binary() -> str:
+    import shutil as _sh
+    return _sh.which('sshd') or '/usr/sbin/sshd'
+
+
+def _sshd_effective() -> dict:
+    """用 sshd -T 读**生效**配置（含 Include 与 Match 之后的结果）。"""
+    r = run_cmd([_sshd_binary(), '-T'], timeout=30, shell=False)
+    if r["code"] != 0:
+        return {}
+    out = {}
+    for line in (r["stdout"] or "").splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            out[parts[0].strip().lower()] = parts[1].strip()
+    return out
+
+
+def _sshd_has_include() -> bool:
+    try:
+        with open(SSHD_CONFIG, "r", encoding="utf-8", errors="replace") as fh:
+            return any(l.strip().lower().startswith("include") for l in fh)
+    except Exception:
+        return False
+
+
+def _write_dropin(changes) -> bool:
+    """写面板专属 drop-in（00- 前缀在 Include 里排最前 → 优先级最高）。"""
+    try:
+        os.makedirs(DROPIN_DIR, exist_ok=True)
+        body = ["# RT面板 SSH 加固（P-21：写在 drop-in 里才能真正生效）"]
+        body += [f"{k} {v}" for k, v in changes]
+        with open(DROPIN_FILE, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(body) + "\n")
+        os.chmod(DROPIN_FILE, 0o600)
+        return True
+    except Exception:
+        return False
+
 def _restart_ssh() -> bool:
     for svc in ('ssh', 'sshd'):
         r = run_cmd(['systemctl', 'restart', svc], timeout=60, shell=False)
@@ -118,21 +163,29 @@ def ssh_config_update(body: dict, request: Request,
     except Exception:
         raise HTTPException(status_code=400, detail='备份 sshd_config 失败（需 root 权限）')
 
-    # 纯 Python 改写：去掉旧键值行（含注释），再按规范值追加，全程不走 shell
+    # P-21：改成写 drop-in（00- 前缀 = Include 里最先被读到 = 优先级最高），
+    # 否则我们追加到主文件末尾的值会被 drop-in 里的旧值压过去，"加固成功"是假的。
     changes = (('Port', str(port)), ('PermitRootLogin', permit_root),
                ('PasswordAuthentication', password_auth), ('PubkeyAuthentication', pubkey_auth))
     change_keys = {k for k, _ in changes}
+    if not _sshd_has_include():
+        raise HTTPException(status_code=400,
+                            detail="sshd_config 缺少 Include 指令，无法用 drop-in 安全加固；请先确认 /etc/ssh/sshd_config 顶部包含 Include /etc/ssh/sshd_config.d/*.conf")
+    if not _write_dropin(changes):
+        raise HTTPException(status_code=400, detail="写入 SSH drop-in 失败（需 root 权限）")
     try:
         with open(SSHD_CONFIG, 'r', encoding='utf-8', errors='replace') as fh:
             lines = fh.read().splitlines()
         kept = []
+        in_match = False
         for ln in lines:
+            if re.match(r'^\s*Match\s', ln, re.I):
+                in_match = True
             m = re.match(r'^\s*#?\s*([A-Za-z][A-Za-z0-9]*)\s+', ln)
-            if m and m.group(1) in change_keys:
+            # Match 块内的同名键不动（那是按用户/来源的定向策略）
+            if m and m.group(1) in change_keys and not in_match:
                 continue
             kept.append(ln)
-        for key, val in changes:
-            kept.append(f'{key} {val}')
         with open(SSHD_CONFIG, 'w', encoding='utf-8') as fh:
             fh.write('\n'.join(kept) + '\n')
     except Exception as e:
@@ -155,6 +208,13 @@ def ssh_config_update(body: dict, request: Request,
                             + ((t['stderr'] or t['stdout']) or '')[:200])
 
     restarted = _restart_ssh()
+    # P-21：读**生效值**复核，只有真的生效才算成功（原实现只看"服务重启了"）
+    eff = _sshd_effective()
+    expect = {k.lower(): v for k, v in changes}
+    mismatch = {k: (expect[k], eff.get(k)) for k in expect if eff and eff.get(k) != expect[k]}
+    if mismatch:
+        raise HTTPException(status_code=400,
+                            detail=f"SSH 配置未真正生效（期望/实际）：{mismatch}。已保留 drop-in，请检查其它 drop-in 或 Match 块")
     audit(user['username'], get_client_ip(request), 'ssh_config',
           f'修改 SSH 配置：端口 {port}，Root登录 {permit_root}，'
           f'密码认证 {password_auth}，公钥认证 {pubkey_auth}', 'warning')

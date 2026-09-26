@@ -58,7 +58,7 @@ def _check_all():
 
 
 @router.post('/add')
-def guardian_add(body: dict, request: Request, user: dict = Depends(require_perm('processes:kill'))):
+def guardian_add(body: dict, request: Request, user: dict = Depends(require_perm('system:manage'))):
     name = str(body.get('name', '')).strip()
     process = str(body.get('process', '')).strip()
     cmd = str(body.get('cmd', '')).strip()

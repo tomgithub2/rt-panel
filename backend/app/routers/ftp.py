@@ -8,6 +8,8 @@ from ..auth import get_client_ip, require_perm
 from ..database import execute, now, query
 from ..utils.exec_utils import IS_WIN, run_cmd
 
+FTP_PREFIX = 'rtftp_'
+
 router = APIRouter(prefix='/api/ftp', tags=['ftp'])
 
 USERNAME_RE = re.compile(r'^[a-z0-9_]{3,20}$')
@@ -74,11 +76,37 @@ def ftp_create_core(username: str, directory: str, password: str,
         return {'ok': False, 'error': '请在软件商店安装 FTP'}
     if query('SELECT id FROM ftp_users WHERE username=?', (username,), one=True):
         return {'ok': False, 'error': '用户已存在'}
-    run_cmd(['useradd', '-m', '-d', directory, '-s', '/sbin/nologin', username],
-            timeout=30)
+    # P-02：必须确认这个名字在系统里也还没被占用。
+    # 只用面板表判断 = 允许 "root"/"www-data" 这类系统账号通过，随后 chpasswd 会改掉它们
+    # （对 root 而言就是拿走整台机器）。
+    import pwd
+    try:
+        pwd.getpwnam(username)
+        return {'ok': False, 'error': '该名称已被系统账号占用，请换一个用户名'}
+    except KeyError:
+        pass
+    # 统一前缀：面板自己建的 FTP 账号一眼可辨，也避免撞上任何现有/将来的系统账号
+    if not username.startswith(FTP_PREFIX):
+        return {'ok': False, 'error': f'FTP 用户名需以 {FTP_PREFIX} 开头（如 {FTP_PREFIX}site1）'}
+    add = run_cmd(['useradd', '-m', '-d', directory, '-s', '/sbin/nologin', username],
+                  timeout=30)
+    if add['code'] != 0:
+        # 旧实现丢弃了这里的返回值：useradd 失败仍然继续改密，正是 root 口令被覆写的关键一步
+        return {'ok': False,
+                'error': '创建系统用户失败：' + (add['stderr'] or add['stdout'] or '')[:200]}
+    try:
+        created = pwd.getpwnam(username)
+    except KeyError:
+        return {'ok': False, 'error': '系统用户创建后未找到，已中止设置密码'}
     r = run_cmd('chpasswd', input_text=f'{username}:{password}\n', timeout=30)
     if r['code'] != 0:
         return {'ok': False, 'error': '设置密码失败：' + (r['stderr'] or '')[:200]}
+    # 二次确认：改密的确实是刚建出来的那个 uid（防止并发/别名等情况改到别人）
+    try:
+        if pwd.getpwnam(username).pw_uid != created.pw_uid:
+            return {'ok': False, 'error': '用户身份校验失败，已中止'}
+    except KeyError:
+        return {'ok': False, 'error': '用户身份校验失败，已中止'}
     uid = execute('INSERT INTO ftp_users (username, dir, note, created_at) VALUES (?,?,?,?)',
                   (username, directory, note, now()))
     return {'ok': True, 'id': uid}

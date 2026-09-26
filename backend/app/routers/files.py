@@ -25,9 +25,17 @@ _MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
 
 
 def _norm(path: str) -> str:
+    """规范化 + 敏感路径守卫（P-01）。
+
+    原先这里只做 normpath，于是任何有 files:read 的账号都能
+    `?path=<DATA_DIR>/secret.key` 拿到 JWT 签名密钥（进而伪造管理员 → root RCE）。
+    现在统一交给 utils.pathguard.assert_allowed：realpath + commonpath 判定，
+    面板数据/备份目录一律 403。
+    """
     if not path:
         raise HTTPException(status_code=400, detail='路径为空')
-    return os.path.normpath(path)
+    from ..utils.pathguard import assert_allowed
+    return assert_allowed(os.path.normpath(path))
 
 
 def _has(user: dict, perm: str) -> bool:

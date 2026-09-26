@@ -14,9 +14,15 @@ router = APIRouter(prefix='/api/cron', tags=['cron'])
 @router.get('/list')
 def cron_list(user: dict = Depends(require_perm('cron:view'))):
     jobs = query('SELECT * FROM cron_jobs ORDER BY id DESC')
+    # P-25g：只有 cron:manage 才看得到 root 命令与上次输出（只读访客看得到等于情报泄露）
+    from ..rbac import role_permissions
+    can_manage = user['role'] == 'admin' or 'cron:manage' in role_permissions(user['role'])
     for j in jobs:
         j['next_runs'] = next_runs(j['schedule'], 3)
-    return {'list': jobs}
+        if not can_manage:
+            j.pop('command', None)
+            j.pop('last_output', None)
+    return {'list': jobs, 'can_manage': can_manage}
 
 
 @router.post('/add')
@@ -26,9 +32,16 @@ def cron_add(body: dict, request: Request, user: dict = Depends(require_perm('cr
     command = str(body.get('command', '')).strip()
     # URL 任务（定时访问网址，如监控保活/触发钩子）
     if body.get('type') == 'url':
-        if not command.startswith(('http://', 'https://')):
-            raise HTTPException(status_code=400, detail='URL 任务地址需以 http(s):// 开头')
-        command = f'curl -fsS --max-time 60 "{command}"'
+        # P-25a：不要把 URL 拼成 shell 字符串再交给 shell=True 执行 ——
+        # `http://x/$(id>/tmp/pwned)` 会落库并由调度器以 root 定时执行（持久化后门）。
+        # 这里只做 scheme/host 校验并把 URL 原样存库（带 url: 标记），执行时用 argv。
+        from urllib.parse import urlparse as _urlparse
+        parsed = _urlparse(command)
+        if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+            raise HTTPException(status_code=400, detail='URL 任务地址需为完整的 http(s) 地址')
+        if any(ch.isspace() for ch in command) or any(ch in command for ch in (';', '|', '&', '$', '`', '\n', '\r')):
+            raise HTTPException(status_code=400, detail='URL 任务地址包含非法字符')
+        command = 'url:' + command
     if not name or not schedule or not command:
         raise HTTPException(status_code=400, detail='名称/计划/命令不能为空')
     runs = next_runs(schedule, 1)

@@ -282,7 +282,12 @@ def run_job(job_id: int) -> dict:
         return {'ok': False, 'error': '任务不存在'}
     from .utils.exec_utils import run_cmd
     t0 = time.time()
-    r = run_cmd(job['command'], timeout=int(job.get('timeout') or 3600), shell=True)
+    # P-25a：URL 任务用 argv 形式执行（不再把 URL 交给 shell）；其余命令保持原样
+    cmd = job['command'] or ''
+    if cmd.startswith('url:'):
+        r = run_cmd(['curl', '-fsS', '--max-time', '60', cmd[4:]], timeout=120, shell=False)
+    else:
+        r = run_cmd(cmd, timeout=int(job.get('timeout') or 3600), shell=True)
     duration = round(time.time() - t0, 2)
     output = (r['stdout'] + r['stderr'])[-4000:]
     code = r['code'] if r['code'] is not None else -1
@@ -415,7 +420,7 @@ def start():
     if not cfg.get('initialized'):
         save_config({'initialized': True})
     loops = [_sample_loop, _aggregate_loop, _alert_loop, _cron_loop, _ssl_renew_loop,
-             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop, _waf_crowd_loop,
+             _guardian_loop, _ai_knowledge_loop, _waf_scan_loop, _waf_crowd_loop, _unban_loop,
              _waf_telemetry_loop]
     for fn in loops:
         t = threading.Thread(target=fn, daemon=True, name=f'ops-{fn.__name__}')
@@ -432,6 +437,24 @@ def _waf_scan_loop():
         try:
             from .routers.waf import scan_waf_hits
             scan_waf_hits()
+        except Exception:
+            pass
+
+
+def _unban_loop():
+    """P-11：到期自动解封（自动封禁只封 30 分钟，不是永久）。"""
+    while not _stop.is_set():
+        _stop.wait(60)
+        if _stop.is_set():
+            break
+        try:
+            from .database import execute, now, query
+            from .routers.firewall import unblock_ip_core
+            rows = query("SELECT ip FROM ip_blocks WHERE expires_at IS NOT NULL AND expires_at<=?",
+                         (now(),))
+            for r in rows:
+                if unblock_ip_core(r["ip"]):
+                    execute("DELETE FROM ip_blocks WHERE ip=?", (r["ip"],))
         except Exception:
             pass
 

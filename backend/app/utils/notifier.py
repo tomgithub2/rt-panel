@@ -23,13 +23,29 @@ def _cfg(channel: str) -> dict:
         return {}
 
 
+# P-17：读取接口必须和写入接口一样掩码（原来 PUT 做了 ****** 掩码，GET 却明文回显口令）
+_SENSITIVE_KEYS = ('password', 'passwd', 'secret', 'token', 'webhook_token', 'key')
+
+
+def _mask_config(cfg: dict) -> dict:
+    out = {}
+    for k, v in (cfg or {}).items():
+        if any(s in str(k).lower() for s in _SENSITIVE_KEYS) and v:
+            out[k] = '******'
+            out[k + '_set'] = True
+        else:
+            out[k] = v
+    return out
+
+
 def get_channels() -> list:
     out = []
     for ch in CHANNELS:
         row = query('SELECT enabled, config FROM notifications WHERE channel=?',
                     (ch,), one=True)
+        raw = json.loads(row['config']) if row and row['config'] else {}
         out.append({'channel': ch, 'enabled': bool(row['enabled']) if row else False,
-                    'config': json.loads(row['config']) if row and row['config'] else {}})
+                    'config': _mask_config(raw)})
     return out
 
 
@@ -84,14 +100,46 @@ def _send_email(cfg: dict, title: str, content: str) -> dict:
     return {'ok': True}
 
 
+def _assert_public_url(url: str):
+    """P-18：只允许 http(s) 且解析后必须是公网地址（挡内网/回环/云元数据/本机面板）。"""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+    parsed = urlparse(str(url or '').strip())
+    if parsed.scheme not in ('http', 'https'):
+        raise ValueError('通知地址必须是 http(s)')
+    host = parsed.hostname or ''
+    if not host:
+        raise ValueError('通知地址缺少主机名')
+    if parsed.port and parsed.port in (22, 25, 3306, 6379, 8000, 8800, 18888):
+        raise ValueError('通知地址端口受限')
+    ips = []
+    try:
+        ips.append(ipaddress.ip_address(host))
+    except ValueError:
+        try:
+            for info in socket.getaddrinfo(host, None):
+                ips.append(ipaddress.ip_address(info[4][0]))
+        except Exception as e:
+            raise ValueError(f'域名无法解析：{e}')
+    for ip in ips:
+        if (not ip.is_global) or ip.is_loopback or ip.is_private or ip.is_link_local:
+            raise ValueError(f'通知地址不能指向内网/本机：{ip}')
+
+
 def _http_post(url: str, payload: dict, headers: dict = None, timeout: int = 10) -> dict:
+    try:
+        _assert_public_url(url)
+    except ValueError as e:
+        return {'ok': False, 'error': str(e)}
     data = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(url, data=data,
                                  headers={'Content-Type': 'application/json',
                                           **(headers or {})})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        body = resp.read().decode('utf-8', 'ignore')
-    return {'ok': True, 'body': body}
+        body = resp.read(4096).decode('utf-8', 'ignore')
+    # P-18：响应体不再原样回显给调用方（避免把内网数据带出来），只给状态与长度
+    return {'ok': True, 'bytes': len(body)}
 
 
 def _send_webhook(cfg: dict, title: str, content: str) -> dict:

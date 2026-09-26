@@ -17,6 +17,11 @@ TMP_DIR = os.path.join(DATA_DIR, 'tmp')
 
 for d in (DATA_DIR, CERT_DIR, BACKUP_DIR, WWWROOT_DIR, LOG_DIR, TMP_DIR):
     os.makedirs(d, exist_ok=True)
+    # P-01：面板数据目录收紧到 0700（里面是密钥、库、绑定与配置）
+    try:
+        os.chmod(d, 0o700)
+    except Exception:
+        pass
 
 CONFIG_FILE = os.path.join(DATA_DIR, 'config.json')
 SECRET_FILE = os.path.join(DATA_DIR, 'secret.key')
@@ -81,10 +86,39 @@ def save_config(updates: dict) -> dict:
 
 
 def get_jwt_secret() -> str:
+    """JWT 签名密钥（0600，且修 P-01 时强制轮换一次）。
+
+    旧实现用普通 open() 写文件：umask 0022 下是 0644，本机任何用户（含面板自建 FTP 用户、
+    被入侵站点的 www-data）都能读到；叠加文件管理接口可远程读取 → 伪造管理员令牌。
+    这里：① 用 os.open(..., 0o600) 创建；② 若发现密钥文件权限过宽或轮换标记缺失，
+    直接重新生成（已泄露的密钥必须作废，代价是用户重新登录一次）。
+    """
+    marker = os.path.join(DATA_DIR, 'secret.rotated')
     with _lock:
-        if not os.path.exists(SECRET_FILE):
-            with open(SECRET_FILE, 'w', encoding='utf-8') as f:
+        need_new = not os.path.exists(SECRET_FILE)
+        if not need_new:
+            # 权限位只在 POSIX 上有意义：Windows 的 st_mode 恒为 0o666，
+            # 照搬判断会导致每次调用都重新生成密钥（用户反复被登出）。
+            if os.name == 'posix':
+                try:
+                    mode = os.stat(SECRET_FILE).st_mode & 0o777
+                    if mode & 0o077:
+                        need_new = True
+                except Exception:
+                    pass
+            # 一次性轮换：修 P-01 之前写下的密钥可能已被读走，首次启动后作废重签
+            if not os.path.exists(marker):
+                need_new = True
+        if need_new:
+            fd = os.open(SECRET_FILE, os.O_CREAT | os.O_TRUNC | os.O_WRONLY, 0o600)
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
                 f.write(secrets.token_hex(32))
+            try:
+                os.chmod(SECRET_FILE, 0o600)
+                with open(marker, 'w', encoding='utf-8') as f:
+                    f.write('rotated')
+            except Exception:
+                pass
         with open(SECRET_FILE, 'r', encoding='utf-8') as f:
             return f.read().strip()
 

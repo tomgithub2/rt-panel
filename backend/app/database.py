@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS users (
     remark TEXT DEFAULT '',
     status INTEGER NOT NULL DEFAULT 1,
     two_fa INTEGER NOT NULL DEFAULT 0,
+    token_epoch INTEGER NOT NULL DEFAULT 0,
     created_at REAL NOT NULL,
     last_login REAL
 );
@@ -253,6 +254,16 @@ def _connect() -> sqlite3.Connection:
     return dbLink
 
 
+def _migrate_token_epoch(conn):
+    """老库补 token_epoch 列（P-14 迁移）。"""
+    try:
+        cols = [r[1] for r in conn.execute('PRAGMA table_info(users)')]
+        if 'token_epoch' not in cols:
+            conn.execute('ALTER TABLE users ADD COLUMN token_epoch INTEGER NOT NULL DEFAULT 0')
+    except Exception:
+        pass
+
+
 def init_db():
     with _write_lock:
         dbLink = _connect()
@@ -317,6 +328,7 @@ def execute(sql: str, params=()) -> int:
 def executemany(sql: str, seq):
     with _write_lock:
         conn = _connect()
+        _migrate_token_epoch(conn)
         try:
             conn.executemany(sql, seq)
             conn.commit()
