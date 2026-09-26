@@ -6,7 +6,7 @@
     python tools/build_release.py
 
 产出:
-    release/dist/rt-panel-2.0.0-rc2.tar.gz   (Linux 一键安装包)
+    release/dist/rt-panel-2.0.0-rc3.tar.gz   (Linux 一键安装包)
     release/dist/rt-panel-setup-1.0.0.exe (Windows 安装程序)
 """
 import os
@@ -18,7 +18,7 @@ import tarfile
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE = os.path.join(BASE, 'release')
 DIST = os.path.join(RELEASE, 'dist')
-VERSION = '2.0.0-rc2'
+VERSION = '2.0.0-rc3'
 
 # 面板分发包内容（仅用户部署所需的客户端文件；官网/工具不随包分发）
 # 注：公钥 backend/app/license_public.pem 随 backend/app 目录整体拷贝
@@ -75,7 +75,7 @@ def build_linux(panel_dir: str):
     """tar.gz：install.sh 与 panel/ 平级。"""
     os.makedirs(DIST, exist_ok=True)
     out = os.path.join(DIST, f'rt-panel-{VERSION}.tar.gz')
-    install_src = os.path.join(RELEASE, 'linux', 'rt-panel-2.0.0-rc2', 'install_panel.sh')
+    install_src = os.path.join(RELEASE, 'linux', 'rt-panel-2.0.0-rc3', 'install_panel.sh')
     with tarfile.open(out, 'w:gz') as tf:
         tf.add(install_src, arcname='install_panel.sh')
         for root, dirs, files in os.walk(panel_dir):
@@ -200,13 +200,13 @@ def deploy_site_files():
 
     官网部署后即可直接访问：
       https://www.rt888.icu/install_panel.sh        Linux 一键安装入口
-      https://www.rt888.icu/rt-panel-2.0.0-rc2.tar.gz   安装脚本自动下载的包
+      https://www.rt888.icu/rt-panel-2.0.0-rc3.tar.gz   安装脚本自动下载的包
       https://www.rt888.icu/rt-panel-setup-1.0.0.exe Windows 安装程序（下载页）
       https://www.rt888.icu/update/latest.json      面板一键更新（build_update_pkg.py 生成）
     """
 # [官网相关路径已脱敏：官网不开源，内部结构不公开]
     os.makedirs(site_dist, exist_ok=True)
-    install_src = os.path.join(RELEASE, 'linux', 'rt-panel-2.0.0-rc2', 'install_panel.sh')
+    install_src = os.path.join(RELEASE, 'linux', 'rt-panel-2.0.0-rc3', 'install_panel.sh')
     copies = [
         (install_src, os.path.join(site_dist, 'install_panel.sh')),
         (os.path.join(DIST, f'rt-panel-{VERSION}.tar.gz'),

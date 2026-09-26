@@ -1,0 +1,24 @@
+#!/bin/bash
+# RT面板 命令行管理器入口（安装到 /usr/local/bin/rt）
+# 查找顺序：环境变量 RT_PANEL_DIR → 相对自身位置的 backend → /opt/rt-panel
+set -u
+find_cli() {
+  if [ -n "${RT_PANEL_DIR:-}" ] && [ -f "$RT_PANEL_DIR/backend/rtcli.py" ]; then
+    echo "$RT_PANEL_DIR/backend/rtcli.py"; return
+  fi
+  here="$(cd "$(dirname "$0")" && pwd)"
+  for d in "$here" "$here/.." /opt/rt-panel /www/wwwroot/rt-panel; do
+    if [ -f "$d/backend/rtcli.py" ]; then echo "$d/backend/rtcli.py"; return; fi
+  done
+  echo ""
+}
+
+CLI="$(find_cli)"
+if [ -z "$CLI" ]; then
+  echo "未找到 RT面板 的 rtcli.py（可用 RT_PANEL_DIR=/opt/rt-panel 指定安装目录）" >&2
+  exit 1
+fi
+
+PY="$(command -v python3 || command -v python)"
+if [ -z "$PY" ]; then echo "未检测到 python3" >&2; exit 1; fi
+exec "$PY" "$CLI" "$@"
