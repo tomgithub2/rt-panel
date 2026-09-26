@@ -174,9 +174,9 @@ def _site_running(site: dict) -> bool:
         domain = str(site.get('domain') or '')
         if not re.match(r'^[a-z0-9\.\-\*]+$', domain):
             return False
-        checkRst = run_cmd(f'nginx -T 2>/dev/null | grep -q "server_name {domain};"',
-                           timeout=20, shell=True)
-        return checkRst['code'] == 0
+        # §0.2：`nginx -T | grep -q` 改成取回配置文本后在 Python 里判断
+        chk = run_cmd(['nginx', '-T'], timeout=20, shell=False)
+        return f'server_name {domain};' in ((chk['stdout'] or '') + (chk['stderr'] or ''))
     return False
 
 

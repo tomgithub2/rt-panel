@@ -94,14 +94,21 @@ def swap_create(body: dict, request: Request, user: dict = Depends(require_perm(
     if not 128 <= size_mb <= 65536:
         raise HTTPException(status_code=400, detail='Swap 大小需在 128MB-64GB 之间')
     swapPath = _SWAP_PATH
-    r = run_cmd(f'fallocate -l {size_mb}M {swapPath} 2>/dev/null || dd if=/dev/zero of={swapPath} '
-                f'bs=1M count={size_mb} && chmod 600 {swapPath} && mkswap {swapPath} && '
-                f'swapon {swapPath}', timeout=600, shell=True)
+    # §0.2：拆成 argv 调用链（原来用 `||` / `&&` 全交给 shell）
+    r = run_cmd(['fallocate', '-l', f'{size_mb}M', swapPath], timeout=600, shell=False)
+    if r['code'] != 0:
+        r = run_cmd(['dd', 'if=/dev/zero', f'of={swapPath}', 'bs=1M',
+                     f'count={size_mb}'], timeout=600, shell=False)
+    if r['code'] == 0:
+        for step in (['chmod', '600', swapPath], ['mkswap', swapPath], ['swapon', swapPath]):
+            r = run_cmd(step, timeout=120, shell=False)
+            if r['code'] != 0:
+                break
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '创建失败')[:300])
     swappiness = int(body.get('swappiness', 10))
     swappiness = max(0, min(swappiness, 100))  # 只允许 0-100
-    run_cmd(f'sysctl vm.swappiness={swappiness}', timeout=10, shell=True)
+    run_cmd(['sysctl', f'vm.swappiness={swappiness}'], timeout=10, shell=False)
     audit(user['username'], get_client_ip(request), 'swap_create',
           f'创建 Swap {size_mb}MB (swappiness={swappiness})', 'warning')
     return {'ok': True, 'message': f'Swap 已创建 {size_mb}MB 并启用'}
@@ -112,7 +119,13 @@ def swap_delete(request: Request, user: dict = Depends(require_perm('system:mana
     """关闭并删除 /swapfile。"""
     if IS_WIN:
         raise HTTPException(status_code=400, detail='Windows 无需手动管理 Swap')
-    r = run_cmd(f'swapoff {_SWAP_PATH} 2>/dev/null; rm -f {_SWAP_PATH}', timeout=120, shell=True)
+    # §0.2：swapoff 走 argv，删除文件用 Python（不再 `; rm -f` 交 shell）
+    r = run_cmd(['swapoff', _SWAP_PATH], timeout=120, shell=False)
+    try:
+        if os.path.isfile(_SWAP_PATH):
+            os.remove(_SWAP_PATH)
+    except Exception:
+        pass
     if r['code'] != 0:
         raise HTTPException(status_code=500, detail=(r['stderr'] or '删除失败')[:300])
     audit(user['username'], get_client_ip(request), 'swap_delete', '删除 Swap 文件', 'warning')

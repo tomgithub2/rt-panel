@@ -340,8 +340,10 @@ def deploy_core(app_key: str, domain: str, port: int = 80) -> dict:
     # 3. 下载源码包（curl 优先，wget 兜底）
     suffix = 'zip' if app['ext'] == 'zip' else 'tar.gz'
     tmp_archive = os.path.join(TMP_DIR, f'deploy-{app_key}-{int(now())}.{suffix}')
-    r = run_cmd(f'curl -fsSL -o "{tmp_archive}" "{app["url"]}" '
-                f'|| wget -q -O "{tmp_archive}" "{app["url"]}"', timeout=900, shell=True)
+    # §0.2：argv 形式；curl 失败再退回 wget（不再用 `||` 交给 shell）
+    r = run_cmd(['curl', '-fsSL', '-o', tmp_archive, app['url']], timeout=900, shell=False)
+    if r['code'] != 0:
+        r = run_cmd(['wget', '-q', '-O', tmp_archive, app['url']], timeout=900, shell=False)
     if r['code'] != 0 or not os.path.isfile(tmp_archive) or os.path.getsize(tmp_archive) < 1000:
         return {'ok': False, 'site_id': sid, 'db': db_info,
                 'error': '源站不可达，请稍后重试或手动部署'}
@@ -349,17 +351,17 @@ def deploy_core(app_key: str, domain: str, port: int = 80) -> dict:
     tmp_dir = os.path.join(TMP_DIR, f'deploy-{app_key}-{sid}')
     os.makedirs(tmp_dir, exist_ok=True)
     if app['ext'] == 'zip':
-        er = run_cmd(f'unzip -o "{tmp_archive}" -d "{tmp_dir}"', timeout=300, shell=True)
+        er = run_cmd(['unzip', '-o', tmp_archive, '-d', tmp_dir], timeout=300, shell=False)
     else:
-        er = run_cmd(f'tar -xzf "{tmp_archive}" -C "{tmp_dir}"', timeout=300, shell=True)
+        er = run_cmd(['tar', '-xzf', tmp_archive, '-C', tmp_dir], timeout=300, shell=False)
     if er['code'] != 0:
         return {'ok': False, 'site_id': sid, 'db': db_info,
                 'error': '解压失败：' + (er['stderr'] or '')[:150]}
     # 5. 移动到站点根 + 6. 权限
     _move_extracted(tmp_dir, root)
     if not IS_WIN:
-        run_cmd(f'chmod -R 755 "{root}" && '
-                f'chown -R www-data:www-data "{root}" 2>/dev/null || true', timeout=120, shell=True)
+        run_cmd(['chmod', '-R', '755', root], timeout=120, shell=False)
+        run_cmd(['chown', '-R', 'www-data:www-data', root], timeout=120, shell=False)
     # 清理临时文件
     try:
         os.remove(tmp_archive)

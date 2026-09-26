@@ -43,6 +43,34 @@ def _mysql_cmd(args: str, root_pwd: str = '') -> str:
     return f'{base} {args}'
 
 
+def _dump_gz(argv: list, path: str, timeout: int = 3600) -> dict:
+    """§0.2：用 gzip 流式写文件替代 `mysqldump | gzip > path` 的 shell 管道。
+
+    注意：**不能**把 gzip 文件对象直接交给 subprocess 的 stdout —— 那样子进程会拿到
+    底层文件描述符并写入**未压缩**的原始字节（实测会生成"不是 gzip"的坏文件）。
+    正确做法是走管道，再由 Python 的 gzip 包装器压缩落盘。
+    """
+    import gzip
+    import shutil as _sh
+    import subprocess
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        try:
+            with gzip.open(path, "wb") as gz:
+                _sh.copyfileobj(proc.stdout, gz)
+        finally:
+            try:
+                proc.stdout.close()
+            except Exception:
+                pass
+        err = proc.stderr.read()
+        code = proc.wait(timeout=timeout)
+        return {"code": code, "stdout": "",
+                "stderr": (err or b"").decode("utf-8", "ignore")}
+    except Exception as e:
+        return {"code": 1, "stdout": "", "stderr": str(e)}
+
+
 def _mysql_env(root_pwd: str = '') -> dict:
     """把 MySQL 口令放在环境变量里（替代 argv 传参）。"""
     return {'MYSQL_PWD': root_pwd} if root_pwd else {}
@@ -265,7 +293,9 @@ def db_schema(kind: str, db: str, table: str,
         finally:
             conn.close()
     if kind == 'mysql':
-        r = run_cmd(_mysql_cmd(f'--batch --raw -e "DESCRIBE `{table}`;" {db}'), timeout=30, shell=True)
+        # §0.2：改 argv（table/db 已过 _identifier 白名单，不再经 shell）
+        r = run_cmd(['mysql', '--connect-timeout=10', '-uroot', db,
+                     '--batch', '--raw', '-e', f'DESCRIBE `{table}`;'], timeout=30, shell=False)
         if r['code'] != 0:
             raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:200])
         lines = [l.split('\t') for l in r['stdout'].strip().splitlines()]
@@ -273,9 +303,9 @@ def db_schema(kind: str, db: str, table: str,
                           'default': x[4] if len(x) > 4 else '', 'pk': 'PRI' in (x[3] if len(x) > 3 else '')}
                          for x in lines]}
     if kind == 'postgresql':
-        r = run_cmd(_psql_cmd(f'-d {db} -tAc "SELECT column_name,data_type,is_nullable '
-                              f'FROM information_schema.columns WHERE table_name=\'{table}\'"'),
-                    timeout=30, shell=True)
+        r = run_cmd(['psql', '-U', 'postgres', '-d', db, '-tAc',
+                     'SELECT column_name,data_type,is_nullable FROM information_schema.columns '
+                     f"WHERE table_name='{table}'"], timeout=30, shell=False)
         return {'list': [{'name': l.split('|')[0], 'type': l.split('|')[1],
                           'notnull': l.split('|')[2] == 'NO', 'default': '', 'pk': False}
                          for l in r['stdout'].strip().splitlines() if l.strip()]}
@@ -308,10 +338,13 @@ def db_rows(kind: str, db: str, table: str, limit: int = 100,
         finally:
             conn.close()
     if kind in ('mysql', 'postgresql'):
-        cmd = (_mysql_cmd(f'--batch --raw -e "SELECT * FROM `{table}` LIMIT {limit};" {db}')
+        # §0.2：argv 形式；limit 已 int() 夹到 1-500，table/db 已过 _identifier 白名单
+        cmd = (['mysql', '--connect-timeout=10', '-uroot', db, '--batch', '--raw',
+                '-e', f'SELECT * FROM `{table}` LIMIT {limit};']
                if kind == 'mysql' else
-               _psql_cmd(f'-d {db} -c "SELECT * FROM \\"{table}\\" LIMIT {limit};"'))
-        r = run_cmd(cmd, timeout=60, shell=True)
+               ['psql', '-U', 'postgres', '-d', db, '-c',
+                f'SELECT * FROM "{table}" LIMIT {limit};'])
+        r = run_cmd(cmd, timeout=60, shell=False)
         if r['code'] != 0:
             raise HTTPException(status_code=500, detail=(r['stderr'] or '')[:200])
         lines = [l for l in r['stdout'].splitlines() if l.strip()]
@@ -405,13 +438,13 @@ def dump_database(kind: str, db: str, dest_dir: str, base_name: str) -> dict:
     os.makedirs(dest_dir, exist_ok=True)
     if kind == 'mysql':
         path = os.path.join(dest_dir, base_name + '.sql.gz')
-        r = run_cmd(f'mysqldump -uroot {db} | gzip > "{path}"', timeout=3600, shell=True)
+        r = _dump_gz(['mysqldump', '-uroot', db], path)
         if r['code'] != 0 or not os.path.isfile(path):
             return {'ok': False, 'error': r['stderr'][:300] or 'mysqldump 失败'}
         return {'ok': True, 'path': path, 'size': os.path.getsize(path)}
     if kind == 'postgresql':
         path = os.path.join(dest_dir, base_name + '.sql.gz')
-        r = run_cmd(f'pg_dump -U postgres {db} | gzip > "{path}"', timeout=3600, shell=True)
+        r = _dump_gz(['pg_dump', '-U', 'postgres', db], path)
         if r['code'] != 0 or not os.path.isfile(path):
             return {'ok': False, 'error': r['stderr'][:300] or 'pg_dump 失败'}
         return {'ok': True, 'path': path, 'size': os.path.getsize(path)}
