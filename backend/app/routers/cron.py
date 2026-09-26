@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..audit import audit
 from ..auth import get_client_ip, require_perm
+from ..ownership import assert_touch, owner_where
 from ..database import execute, now, query
 from ..scheduler import next_runs, run_job
 
@@ -13,7 +14,9 @@ router = APIRouter(prefix='/api/cron', tags=['cron'])
 
 @router.get('/list')
 def cron_list(user: dict = Depends(require_perm('cron:view'))):
-    jobs = query('SELECT * FROM cron_jobs ORDER BY id DESC')
+    # P-25h：非管理员只看自己的（历史无主任务保持可见）
+    _w, _p = owner_where(user)
+    jobs = query(f'SELECT * FROM cron_jobs WHERE {_w} ORDER BY id DESC', tuple(_p))
     # P-25g：只有 cron:manage 才看得到 root 命令与上次输出（只读访客看得到等于情报泄露）
     from ..rbac import role_permissions
     can_manage = user['role'] == 'admin' or 'cron:manage' in role_permissions(user['role'])
@@ -52,6 +55,7 @@ def cron_add(body: dict, request: Request, user: dict = Depends(require_perm('cr
         'VALUES (?,?,?,?,?,?,?)',
         (name, schedule, command, 1 if body.get('enabled', True) else 0,
          1 if body.get('notify', False) else 0, int(body.get('timeout', 3600)), now()))
+    execute('UPDATE cron_jobs SET owner_id=? WHERE id=(SELECT MAX(id) FROM cron_jobs)', (user['id'],))   # P-25h：记录归属
     audit(user['username'], get_client_ip(request), 'cron_add', f'添加计划任务 [{name}] {schedule}')
     return {'id': jid, 'next_runs': runs}
 
@@ -60,6 +64,7 @@ def cron_add(body: dict, request: Request, user: dict = Depends(require_perm('cr
 def cron_update(jid: int, body: dict, request: Request,
                 user: dict = Depends(require_perm('cron:manage'))):
     job = query('SELECT * FROM cron_jobs WHERE id=?', (jid,), one=True)
+    assert_touch(user, job, '该计划任务')   # P-25h
     if not job:
         raise HTTPException(status_code=404, detail='任务不存在')
     fields = {k: body[k] for k in ('name', 'schedule', 'command', 'enabled', 'notify', 'timeout')

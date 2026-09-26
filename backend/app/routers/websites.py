@@ -11,6 +11,7 @@ from ..audit import audit
 from ..auth import get_client_ip, require_feature, require_perm
 from ..config import BACKUP_DIR, WWWROOT_DIR
 from ..database import execute, now, query
+from ..ownership import assert_touch, owner_where
 from ..utils.exec_utils import IS_WIN, run_cmd
 
 router = APIRouter(prefix='/api/websites', tags=['websites'],
@@ -161,7 +162,9 @@ def _tail_file(path: str, n: int) -> str:
 
 @router.get('/list')
 def site_list(user: dict = Depends(require_perm('websites:view'))):
-    wzList = query('SELECT * FROM websites ORDER BY id DESC')
+    # P-25h：非管理员只看自己创建的站点（历史无主站点保持可见）
+    _w, _p = owner_where(user)
+    wzList = query(f'SELECT * FROM websites WHERE {_w} ORDER BY id DESC', tuple(_p))
     for oneSite in wzList:
         oneSite['running'] = _site_running(oneSite)
     return {'list': wzList, 'engine': _find_engine()}
@@ -235,6 +238,7 @@ span{{color:#409eff}}</style></head><body><h1>欢迎访问 <span>{domain}</span>
         'VALUES (?,?,?,?,?,?,?,?)',
         (domain, root, port, stype, engine,
          target if stype == 'proxy' else '', 0, now()))
+    execute('UPDATE websites SET owner_id=? WHERE id=(SELECT MAX(id) FROM websites)', (user['id'],))   # P-25h：记录归属
     _render_nginx()
     audit(user['username'], get_client_ip(request), 'website_create', f'创建网站 {domain} ({stype})')
     return {'id': sid, 'db': db_info, 'ftp': ftp_info}
@@ -315,6 +319,7 @@ def site_deploy_app(body: dict, request: Request,
         'INSERT INTO websites (domain,root,port,type,engine,config,status,created_at) '
         'VALUES (?,?,?,?,?,?,?,?)',
         (domain, root, port, stype, 'nginx', '', 0, now()))
+    execute('UPDATE websites SET owner_id=? WHERE id=(SELECT MAX(id) FROM websites)', (user['id'],))   # P-25h：记录归属
     execute('INSERT OR IGNORE INTO site_settings (site_id) VALUES (?)', (sid,))
     _render_nginx()
     php_sock = _php_fpm_sock() if stype == 'php' else ''
@@ -350,6 +355,7 @@ def site_backup(sid: int, request: Request,
                 user: dict = Depends(require_perm('websites:manage'))):
     """一键备份网站目录为 zip（不走 shell，路径可含任意字符）。"""
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     root = os.path.realpath(site['root'])
@@ -452,6 +458,7 @@ def _auto_create_ftp(domain: str, root: str, ftp_user: str = '') -> dict:
 def site_action(sid: int, body: dict, request: Request,
                 user: dict = Depends(require_perm('websites:manage'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     action = body.get('action')
@@ -477,6 +484,7 @@ def site_action(sid: int, body: dict, request: Request,
 def site_update(sid: int, body: dict, request: Request,
                 user: dict = Depends(require_perm('websites:manage'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     root = _safe_site_root(body.get('root', site['root']))
@@ -495,6 +503,7 @@ def site_update(sid: int, body: dict, request: Request,
 def site_detail(sid: int, user: dict = Depends(require_perm('websites:view'))):
     """网站详情（二级管理页数据源）。"""
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     site = site or {}  # 双保险：上面已经判过空了，习惯性再兜一下
@@ -504,6 +513,7 @@ def site_detail(sid: int, user: dict = Depends(require_perm('websites:view'))):
 @router.get('/{sid}/config')
 def site_config(sid: int, user: dict = Depends(require_perm('websites:view'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     conf = _render_single(site)
@@ -513,6 +523,7 @@ def site_logs(sid: int, type: str = 'access', lines: int = 200,
               user: dict = Depends(require_perm('websites:view'))):
     """网站访问/错误日志查看（Nginx 日志尾部）。"""
     wzRow = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, wzRow, '该站点')   # P-25h
     if not wzRow:
         raise HTTPException(status_code=404, detail='网站不存在')
     if type not in ('access', 'error'):
@@ -533,6 +544,7 @@ def site_stats(sid: int, user: dict = Depends(require_perm('websites:view'))):
     """流量统计：今日 PV/UV/流量 + 近 7 天趋势 + 今日 TOP 访问。"""
     import datetime as _dt
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     log_path = _nginx_log_path('access', site['domain'])
@@ -621,6 +633,7 @@ async def site_import(zipfile: UploadFile = File(...), domain: str = Form(''),
         'INSERT INTO websites (domain,root,port,type,engine,config,status,created_at) '
         'VALUES (?,?,?,?,?,?,?,?)',
         (domain, root, port, 'static', 'nginx', '', 0, now()))
+    execute('UPDATE websites SET owner_id=? WHERE id=(SELECT MAX(id) FROM websites)', (user['id'],))   # P-25h：记录归属
     execute('INSERT OR IGNORE INTO site_settings (site_id) VALUES (?)', (sid,))
     _render_nginx()
     audit(user['username'], get_client_ip(request), 'website_import',
@@ -651,6 +664,7 @@ PSEUDO_RULES = {
 @router.get('/{sid}/settings')
 def site_get_settings(sid: int, user: dict = Depends(require_perm('websites:view'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     st = query('SELECT * FROM site_settings WHERE site_id=?', (sid,), one=True) or {}
@@ -662,6 +676,7 @@ def site_get_settings(sid: int, user: dict = Depends(require_perm('websites:view
 def site_put_settings(sid: int, body: dict, request: Request,
                       user: dict = Depends(require_perm('websites:manage'))):
     site = query('SELECT * FROM websites WHERE id=?', (sid,), one=True)
+    assert_touch(user, site, '该站点')   # P-25h
     if not site:
         raise HTTPException(status_code=404, detail='网站不存在')
     pseudo = str(body.get('pseudo', ''))[:20]

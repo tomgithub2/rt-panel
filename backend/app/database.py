@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS cron_jobs (
     enabled INTEGER NOT NULL DEFAULT 1,
     notify INTEGER NOT NULL DEFAULT 0,
     timeout INTEGER NOT NULL DEFAULT 3600,
+    owner_id INTEGER,
     created_at REAL NOT NULL,
     last_run REAL,
     last_status TEXT DEFAULT '',
@@ -114,6 +115,7 @@ CREATE TABLE IF NOT EXISTS websites (
     engine TEXT NOT NULL DEFAULT 'nginx',
     config TEXT DEFAULT '',
     status INTEGER NOT NULL DEFAULT 0,
+    owner_id INTEGER,
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ssl_certs (
@@ -124,6 +126,7 @@ CREATE TABLE IF NOT EXISTS ssl_certs (
     key_path TEXT DEFAULT '',
     expires REAL,
     auto_renew INTEGER NOT NULL DEFAULT 0,
+    owner_id INTEGER,
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS ip_blocks (
@@ -169,6 +172,7 @@ CREATE TABLE IF NOT EXISTS docker_containers (
     env TEXT DEFAULT '',
     volumes TEXT DEFAULT '',
     restart_policy TEXT DEFAULT 'unless-stopped',
+    owner_id INTEGER,
     created_at REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS software_installs (
@@ -241,6 +245,7 @@ CREATE TABLE IF NOT EXISTS ftp_users (
     username TEXT UNIQUE NOT NULL,
     dir TEXT NOT NULL,
     note TEXT DEFAULT '',
+    owner_id INTEGER,
     created_at REAL NOT NULL
 );
 """
@@ -252,6 +257,17 @@ def _connect() -> sqlite3.Connection:
     dbLink.execute('PRAGMA journal_mode=WAL')
     dbLink.execute('PRAGMA foreign_keys=ON')
     return dbLink
+
+
+def _migrate_owner(conn):
+    """P-25h：老库补 owner_id 列（历史行保持 NULL = 对所有有权限者可见）。"""
+    try:
+        for tbl in ("websites", "ftp_users", "ssl_certs", "docker_containers", "cron_jobs"):
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})")]
+            if cols and "owner_id" not in cols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN owner_id INTEGER")
+    except Exception:
+        pass
 
 
 def _migrate_token_epoch(conn):
@@ -328,6 +344,7 @@ def execute(sql: str, params=()) -> int:
 def executemany(sql: str, seq):
     with _write_lock:
         conn = _connect()
+        _migrate_owner(conn)
         _migrate_token_epoch(conn)
         try:
             conn.executemany(sql, seq)

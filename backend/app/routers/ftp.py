@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from ..audit import audit
 from ..auth import get_client_ip, require_perm
 from ..database import execute, now, query
+from ..ownership import assert_touch, owner_where
 from ..utils.exec_utils import IS_WIN, run_cmd
 
 FTP_PREFIX = 'rtftp_'
@@ -40,7 +41,9 @@ def ftp_status(user: dict = Depends(require_perm('ftp:view'))):
 
 @router.get('/users')
 def ftp_users(user: dict = Depends(require_perm('ftp:view'))):
-    return {'list': query('SELECT * FROM ftp_users ORDER BY id DESC')}
+    # P-25h：非管理员只看自己建的 FTP 用户
+    _w, _p = owner_where(user)
+    return {'list': query(f'SELECT * FROM ftp_users WHERE {_w} ORDER BY id DESC', tuple(_p))}
 
 
 @router.post('/users')
@@ -49,7 +52,7 @@ def ftp_user_add(body: dict, request: Request, user: dict = Depends(require_perm
     directory = str(body.get('dir', '')).strip()
     password = str(body.get('password', ''))
     note = str(body.get('note', ''))[:100]
-    r = ftp_create_core(username, directory, password, note)
+    r = ftp_create_core(username, directory, password, note, owner_id=user['id'])
     if not r.get('ok'):
         raise HTTPException(status_code=400, detail=r.get('error', '创建失败'))
     audit(user['username'], get_client_ip(request), 'ftp_user_add',
@@ -109,12 +112,15 @@ def ftp_create_core(username: str, directory: str, password: str,
         return {'ok': False, 'error': '用户身份校验失败，已中止'}
     uid = execute('INSERT INTO ftp_users (username, dir, note, created_at) VALUES (?,?,?,?)',
                   (username, directory, note, now()))
+    if owner_id:
+        execute('UPDATE ftp_users SET owner_id=? WHERE id=(SELECT MAX(id) FROM ftp_users)', (owner_id,))   # P-25h：记录归属
     return {'ok': True, 'id': uid}
 
 
 @router.delete('/users/{uid}')
 def ftp_user_del(uid: int, request: Request, user: dict = Depends(require_perm('ftp:manage'))):
     row = query('SELECT * FROM ftp_users WHERE id=?', (uid,), one=True)
+    assert_touch(user, row, '该 FTP 用户')   # P-25h
     if not row:
         raise HTTPException(status_code=404, detail='用户不存在')
     username = row['username']

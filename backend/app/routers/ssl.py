@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 
 from ..audit import audit
 from ..auth import get_client_ip, require_feature, require_perm
+from ..ownership import assert_touch, owner_where
 from ..config import CERT_DIR
 from ..database import execute, now, query
 from ..utils.exec_utils import run_cmd
@@ -53,7 +54,9 @@ def _deploy_to_site(domain: str) -> bool:
 
 @router.get('/certs')
 def cert_list(user: dict = Depends(require_perm('ssl:view'))):
-    rows = query('SELECT * FROM ssl_certs ORDER BY id DESC')
+    # P-25h：非管理员只看自己签发的证书
+    _w, _p = owner_where(user)
+    rows = query(f'SELECT * FROM ssl_certs WHERE {_w} ORDER BY id DESC', tuple(_p))
     for r in rows:
         r['expires'] = r['expires']
     return {'list': rows}
@@ -150,6 +153,7 @@ def selfsigned(body: dict, request: Request, user: dict = Depends(require_perm('
         execute('INSERT INTO ssl_certs (domain,type,cert_path,key_path,expires,created_at) '
                 'VALUES (?,?,?,?,?,?)',
                 (domain, 'selfsigned', cert, key, meta.get('expires'), now()))
+        execute('UPDATE ssl_certs SET owner_id=? WHERE id=(SELECT MAX(id) FROM ssl_certs)', (user['id'],))   # P-25h：记录归属
     try:
         os.chmod(key, 0o600)
     except Exception:
@@ -192,6 +196,7 @@ def issue(body: dict, request: Request, user: dict = Depends(require_perm('ssl:m
         execute('INSERT INTO ssl_certs (domain,type,cert_path,key_path,expires,auto_renew,created_at) '
                 'VALUES (?,?,?,?,?,1,?)',
                 (domain, 'letsencrypt', cert, key, meta.get('expires'), now()))
+        execute('UPDATE ssl_certs SET owner_id=? WHERE id=(SELECT MAX(id) FROM ssl_certs)', (user['id'],))   # P-25h：记录归属
     audit(user['username'], get_client_ip(request), 'ssl_issue', f'签发 Let\'s Encrypt 证书 {domain}')
     deployed = _deploy_to_site(domain)
     return {'ok': True, 'cert': cert, 'key': key, 'meta': meta, 'deployed': deployed}
@@ -231,6 +236,7 @@ async def upload(domain: str, cert: UploadFile, key: UploadFile,
         execute('INSERT INTO ssl_certs (domain,type,cert_path,key_path,expires,created_at) '
                 'VALUES (?,?,?,?,?,?)',
                 (domain, 'uploaded', cert_path, key_path, meta.get('expires'), now()))
+        execute('UPDATE ssl_certs SET owner_id=? WHERE id=(SELECT MAX(id) FROM ssl_certs)', (user['id'],))   # P-25h：记录归属
     audit(user['username'], get_client_ip(request), 'ssl_upload', f'上传证书 {domain}')
     deployed = _deploy_to_site(domain)
     return {'ok': True, 'meta': meta, 'deployed': deployed}
