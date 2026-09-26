@@ -76,28 +76,43 @@ def send(title: str, content: str, only: list = None) -> dict:
 
 
 def _send_email(cfg: dict, title: str, content: str) -> dict:
-    host = cfg.get('host', '')
-    port = int(cfg.get('port', 465))
-    user = cfg.get('user', '')
-    password = cfg.get('password', '')
-    to = cfg.get('to', '')
-    ssl = bool(cfg.get('ssl', True))
-    if not all([host, user, password, to]):
-        return {'ok': False, 'error': '邮件配置不完整'}
-    msg = MIMEText(content, 'plain', 'utf-8')
-    msg['Subject'] = Header(title, 'utf-8')
-    msg['From'] = formataddr(('RT面板', user))
-    msg['To'] = to
-    if ssl:
-        server = smtplib.SMTP_SSL(host, port, timeout=15)
-    else:
-        server = smtplib.SMTP(host, port, timeout=15)
+    """邮件提醒：**由官网（厂商邮箱）代发**，用户只需填写自己的收件邮箱。
+
+    设计：面板不保存任何 SMTP 口令，也不要求用户自建邮件服务；
+    调用官网 `/api/v1/mail/send`（动态验证码认证）即可把提醒发到
+    用户在面板里填写并**邮件确认过**的那个邮箱。
+    兼容：若用户仍愿意自建 SMTP（老配置里有 host 且 password），则继续走本地发信。
+    """
+    host = str(cfg.get('host') or '').strip()
+    password = str(cfg.get('password') or '')
+    if host and password:
+        # 兼容老配置：本地 SMTP 自建发信
+        port = int(cfg.get('port', 465))
+        user = cfg.get('user', '')
+        to = cfg.get('to', '')
+        ssl = bool(cfg.get('ssl', True))
+        if not all([host, user, password, to]):
+            return {'ok': False, 'error': '邮件配置不完整'}
+        msg = MIMEText(content, 'plain', 'utf-8')
+        msg['Subject'] = Header(title, 'utf-8')
+        msg['From'] = formataddr(('RT面板', user))
+        msg['To'] = to
+        if ssl:
+            server = smtplib.SMTP_SSL(host, port, timeout=15)
+        else:
+            server = smtplib.SMTP(host, port, timeout=15)
+        try:
+            server.login(user, password)
+            server.sendmail(user, to.split(','), msg.as_string())
+        finally:
+            server.quit()
+        return {'ok': True}
+    # 默认路径：官网代发（发件人是厂商邮箱，用户只填自己的收件邮箱）
     try:
-        server.login(user, password)
-        server.sendmail(user, to.split(','), msg.as_string())
-    finally:
-        server.quit()
-    return {'ok': True}
+        from ..site_mail import send_via_site
+    except Exception as e:      # pragma: no cover
+        return {'ok': False, 'error': f'代发模块不可用：{e}'}
+    return send_via_site(title, content)
 
 
 def _assert_public_url(url: str):
