@@ -1,0 +1,263 @@
+# Created by 小杜 on 2026/08
+
+"""认证路由：登录/登出/个人信息/改密/登录历史。"""
+import time
+
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
+
+from .. import audit
+from ..auth import (create_token, decode_token, get_client_ip,
+                    get_current_user, hash_password, is_locked, record_fail,
+                    password_policy_error, reset_fail, revoke_token, verify_password)
+from ..config import PANEL_VERSION, get_config
+from ..database import execute, now, query
+from ..rbac import ROLES, role_permissions
+
+router = APIRouter(prefix='/api/auth', tags=['auth'])
+
+
+@router.post('/captcha')
+def get_captcha():
+    """获取登录验证码（数学运算，防爆破）。"""
+    from .. import captcha
+    return captcha.generate()
+
+
+@router.post('/login')
+def login(body: dict, request: Request):
+    username = str(body.get('username', '')).strip()
+    password = str(body.get('password', ''))
+    ip = get_client_ip(request)
+    ua = request.headers.get('user-agent', '')[:200]
+    if not username or not password:
+        raise HTTPException(status_code=400, detail='请输入用户名和密码')
+    if is_locked(ip) or is_locked(username):
+        audit.audit(username, ip, 'login_blocked', '账户/来源被临时锁定')
+        raise HTTPException(status_code=429, detail='失败次数过多，账户已临时锁定，请稍后再试')
+    # IP 白名单（安全中心配置后仅白名单可登录）
+    whitelist = [x.strip() for x in str(get_config().get('login_ip_whitelist', '')).split(',')
+                 if x.strip()]
+    if whitelist and ip not in whitelist:
+        audit.audit(username, ip, 'login_ip_denied', 'IP 不在登录白名单')
+        audit.login_log(username, ip, ua, False, 'IP 不在白名单')
+        raise HTTPException(status_code=403, detail='当前 IP 不允许登录面板（白名单限制）')
+    # 数学验证码
+    from .. import captcha
+    cid = str(body.get('captcha_id', ''))
+    captcha_code = str(body.get('captcha_code', '')).strip()
+    if not cid or not captcha.verify(cid, captcha_code):
+        record_fail(ip)
+        raise HTTPException(status_code=400, detail='验证码错误，请重试')
+    user = query('SELECT * FROM users WHERE username=?', (username,), one=True)
+    if not user or not verify_password(password, user['password_hash']):
+        count = record_fail(username)
+        ip_count = record_fail(ip)
+        audit.login_log(username, ip, ua, False, '密码错误')
+        # 自研 Fail2ban：同一 IP 连续失败 ≥5 次 → 系统防火墙自动封禁
+        if ip_count >= 5:
+            _auto_ban_ip(ip, username)
+        raise HTTPException(status_code=401, detail=f'用户名或密码错误（连续失败 {count} 次）')
+    if not user['status']:
+        audit.login_log(username, ip, ua, False, '账户已禁用')
+        raise HTTPException(status_code=403, detail='账户已被禁用')
+    # 两步验证
+    if user.get('two_fa') and user.get('totp_secret'):
+        from .. import totp
+        code = str(body.get('code', '')).strip()
+        if not totp.verify(user['totp_secret'], code):
+            count = record_fail(username)
+            audit.login_log(username, ip, ua, False, '两步验证码错误')
+            raise HTTPException(status_code=401,
+                                detail=f'两步验证码错误（连续失败 {count} 次）')
+    reset_fail(username)
+    reset_fail(ip)
+    token = create_token(user)
+    execute('UPDATE users SET last_login=? WHERE id=?', (now(), user['id']))
+    audit.login_log(username, ip, ua, True)
+    audit.audit(username, ip, 'login', '登录成功')
+    # 新登录提醒（已配置通知渠道且开启时）
+    if int(get_config().get('login_notify', 0) or 0):
+        try:
+            from ..utils.notifier import send
+            import threading
+            threading.Thread(target=send, daemon=True, args=(
+                f'RT面板新登录: {username}',
+                f'时间: {time.strftime("%Y-%m-%d %H:%M:%S")}\nIP: {ip}\n浏览器: {ua[:80]}')).start()
+        except Exception:
+            pass
+    return {'token': token, 'user': _public_user(user)}
+
+
+@router.post('/logout')
+def logout(request: Request, authorization: str = Header(default=''),
+           user: dict = Depends(get_current_user)):
+    if authorization.startswith('Bearer '):
+        revoke_token(authorization[7:])
+    audit.audit(user['username'], get_client_ip(request), 'logout', '退出登录')
+    return {'ok': True}
+
+
+@router.get('/me')
+def me(user: dict = Depends(get_current_user)):
+    perms = sorted(role_permissions(user['role']))
+    return {
+        'user': _public_user(user),
+        'role': {'id': user['role'], **{k: v for k, v in ROLES[user['role']].items() if k != 'perms'}},
+        'perms': perms,
+        'version': PANEL_VERSION,
+        'panel': {
+            'site_name': get_config().get('site_name', 'RT面板'),
+            'language': get_config().get('language', 'zh-CN'),
+            'theme': get_config().get('theme', 'lightgold'),
+        },
+    }
+
+
+@router.put('/password')
+def change_password(body: dict, request: Request,
+                    user: dict = Depends(get_current_user)):
+    old = str(body.get('old_password', ''))
+    new = str(body.get('new_password', ''))
+    if not old or not new:
+        raise HTTPException(status_code=400, detail='参数不完整')
+    policy_error = password_policy_error(new)
+    if policy_error:
+        raise HTTPException(status_code=400, detail=policy_error)
+    if not verify_password(old, user['password_hash']):
+        raise HTTPException(status_code=400, detail='原密码错误')
+    # P-14：改密后作废本人全部旧令牌
+    from ..auth import bump_token_epoch
+    bump_token_epoch(user['id'])
+    execute('UPDATE users SET password_hash=? WHERE id=?',
+            (hash_password(new), user['id']))
+    audit.audit(user['username'], get_client_ip(request), 'change_password',
+                '修改了登录密码', 'warning')
+    return {'ok': True}
+
+
+@router.get('/login-history')
+def login_history(limit: int = 50, user: dict = Depends(require_perm('users:view'))):
+    rows = query('SELECT * FROM login_logs ORDER BY id DESC LIMIT ?', (limit,))
+    for r in rows:
+        r['ts'] = r['ts']
+    return {'list': rows}
+
+
+# ---------------------------------------------------------------- 两步验证
+# P-13：待确认的 2FA 密钥只存在服务端内存里（uid → (secret, 过期时间)）
+_pending_totp = {}
+
+
+def _check_identity(user: dict, body: dict):
+    """P-13：变更 2FA 必须证明身份 —— 已启用则要旧 TOTP，否则要当前密码。"""
+    from .. import totp
+    from ..auth import verify_password
+    code = str(body.get('code', '')).strip()
+    password = str(body.get('password', ''))
+    if user.get("totp_secret"):
+        if not code or not totp.verify(user["totp_secret"], code):
+            raise HTTPException(status_code=400, detail='请输入当前两步验证码以确认身份')
+        return True
+    if not password or not verify_password(password, user["password_hash"]):
+        raise HTTPException(status_code=400, detail='请输入当前登录密码以确认身份')
+    return True
+
+
+@router.post('/2fa/setup')
+def twofa_setup(user: dict = Depends(get_current_user)):
+    from .. import totp
+    import time as _t
+    secret = totp.generate_secret()
+    # P-13：密钥留在服务端，客户端拿不到就不能自造 secret 覆盖别人的因子
+    _pending_totp[user['id']] = (secret, _t.time() + 300)
+    return {'otpauth': totp.otpauth_url(secret, user['username']), 'expires_in': 300}
+
+
+@router.post('/2fa/enable')
+def twofa_enable(body: dict, request: Request, user: dict = Depends(get_current_user)):
+    from .. import totp
+    import time as _t
+    # P-13：① 身份确认（已启用要旧 TOTP，首次启用要当前密码）
+    _check_identity(user, body)
+    # ② 校验的是服务端暂存的那个 secret，不接受请求体里的 secret
+    entry = _pending_totp.get(user['id'])
+    if not entry or entry[1] < _t.time():
+        raise HTTPException(status_code=400, detail='两步验证绑定已过期，请重新获取二维码')
+    secret = entry[0]
+    code2 = str(body.get('new_code', '') or body.get('bind_code', '')).strip()
+    if not code2 or not totp.verify(secret, code2):
+        raise HTTPException(status_code=400, detail='新两步验证码错误，请重试')
+    from ..auth import bump_token_epoch
+    bump_token_epoch(user['id'])          # P-14：2FA 变更同样作废旧令牌
+    execute('UPDATE users SET totp_secret=?, two_fa=1 WHERE id=?', (secret, user['id']))
+    audit.audit(user['username'], get_client_ip(request), '2fa_enable',
+                '启用两步验证', 'warning')
+    return {'ok': True}
+
+
+@router.post('/2fa/disable')
+def twofa_disable(body: dict, request: Request, user: dict = Depends(get_current_user)):
+    # P-13：关闭同样要求身份确认（TOTP 或当前密码）
+    _check_identity(user, body)
+    from ..auth import bump_token_epoch
+    bump_token_epoch(user['id'])          # P-14
+    execute('UPDATE users SET totp_secret=NULL, two_fa=0 WHERE id=?', (user['id'],))
+    audit.audit(user['username'], get_client_ip(request), '2fa_disable',
+                '关闭两步验证', 'warning')
+    return {'ok': True}
+
+
+AUTO_BAN_SECONDS = 1800      # P-11：自动封禁改为限时 30 分钟（原来写 NULL = 永久）
+
+
+def _is_gateway_or_private(ip: str) -> bool:
+    """网关/内网/回环/链路本地一律不自动封禁（P-11：封了网关等于整站不可达）。"""
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    if addr.is_loopback or addr.is_link_local or addr.is_private or addr.is_multicast:
+        return True
+    # Docker/K8s 常见网桥段即便被标记为 global 也一并排除
+    for net in ('172.16.0.0/12', '10.0.0.0/8', '192.168.0.0/16', '100.64.0.0/10'):
+        if addr in ipaddress.ip_network(net):
+            return True
+    return False
+
+
+def _auto_ban_ip(ip: str, username: str):
+    """自研 Fail2ban：连续失败达阈值后系统防火墙**限时**封禁该 IP。"""
+    import threading
+
+    if _is_gateway_or_private(ip):
+        # 面板多半是经反代/容器网关访问的：封掉这个地址会让所有人进不来
+        audit.audit('system', ip, 'auto_ban_skipped',
+                    f'疑似网关/内网地址，跳过自动封禁（账户 {username}）', 'warning')
+        return
+
+    def _do():
+        try:
+            from .firewall import block_ip_core
+            from ..database import execute
+            if block_ip_core(ip):
+                audit.audit('system', ip, 'auto_ban',
+                            f'暴力破解自动封禁 IP（账户 {username}，{AUTO_BAN_SECONDS // 60} 分钟）',
+                            'critical')
+                execute('INSERT OR REPLACE INTO ip_blocks (ip, reason, blocked_at, expires_at) '
+                        'VALUES (?,?,?,?)',
+                        (ip, f'暴力破解自动封禁（账户 {username}）',
+                         now(), now() + AUTO_BAN_SECONDS))
+        except Exception:
+            pass
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
+def _public_user(u: dict) -> dict:
+    return {
+        'id': u['id'], 'username': u['username'], 'role': u['role'],
+        'email': u.get('email', ''), 'remark': u.get('remark', ''),
+        'two_fa': u.get('two_fa', 0), 'created_at': u.get('created_at'),
+        'last_login': u.get('last_login'),
+    }
